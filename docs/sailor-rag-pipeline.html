@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lite Ops Sailor &mdash; Pipeline RAG : Embeddings &amp; Recherche Vectorielle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300;1,9..40,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,300;1,8..60,400;1,8..60,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg: #F5F4F0; --surface: #FFFFFF; --text: #1C1D1A; --text-sec: #504E48;
+  --text-muted: #8C8A82; --accent: #6B8A1A; --accent-dim: rgba(107,138,26,0.07);
+  --signal: #4A90B8; --warm: #C45A32; --success: #3A8A4A; --warning: #D4A03A;
+  --border: #E0DDD6; --border-sub: #ECEAE4; --olive-900: #1C1D1A; --olive-800: #2A2B27;
+  --paper-300: #E0DDD6; --paper-400: #D0CCC4;
+  --font-display: 'Source Serif 4', Georgia, serif;
+  --font-body: 'DM Sans', 'Helvetica Neue', sans-serif;
+  --font-data: 'IBM Plex Mono', Menlo, monospace;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-body); line-height: 1.65; -webkit-font-smoothing: antialiased; }
+.page { max-width: 1140px; margin: 0 auto; padding: 48px 32px 80px; }
+
+/* Header */
+.header { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 24px; margin-bottom: 40px; border-bottom: 2px solid var(--accent); }
+.logo { display: flex; align-items: baseline; }
+.logo-lite { font-family: var(--font-display); font-style: italic; font-weight: 300; font-size: 24px; color: var(--accent); }
+.logo-change { font-family: var(--font-display); font-weight: 400; font-size: 24px; color: var(--text); }
+.header-meta { font-family: var(--font-data); font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
+
+/* Typography */
+h1 { font-family: var(--font-display); font-weight: 500; font-size: 32px; letter-spacing: -0.02em; margin-bottom: 8px; }
+h2 { font-family: var(--font-display); font-weight: 500; font-size: 22px; letter-spacing: -0.01em; margin-top: 56px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h3 { font-family: var(--font-body); font-weight: 600; font-size: 15px; margin-top: 32px; margin-bottom: 8px; }
+p { max-width: 680px; margin-bottom: 12px; font-size: 14px; color: var(--text-sec); }
+.lead { font-size: 15px; color: var(--text-sec); max-width: 680px; margin-bottom: 32px; }
+.data-label { font-family: var(--font-data); font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
+code { font-family: var(--font-data); font-size: 11px; padding: 2px 6px; background: var(--border-sub); border-radius: 4px; color: var(--text); }
+
+/* Badges */
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 9999px; font-family: var(--font-data); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
+.badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.badge-frontend { background: rgba(74,144,184,0.1); color: #3A7A9E; }
+.badge-frontend::before { background: var(--signal); }
+.badge-backend { background: rgba(107,138,26,0.1); color: var(--accent); }
+.badge-backend::before { background: var(--accent); }
+.badge-ai { background: rgba(196,90,50,0.1); color: var(--warm); }
+.badge-ai::before { background: var(--warm); }
+.badge-vector { background: rgba(74,144,184,0.1); color: var(--signal); }
+.badge-vector::before { background: var(--signal); }
+.badge-local { background: rgba(28,29,26,0.08); color: var(--olive-800); }
+.badge-local::before { background: var(--olive-800); }
+
+/* Cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 20px 24px; margin-bottom: 16px; }
+.card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.card-title { font-weight: 600; font-size: 14px; }
+
+/* Schema blocks */
+.schema-block { background: var(--olive-900); color: #E8E6E1; border-radius: var(--radius-md); padding: 20px 24px; margin: 16px 0 24px; overflow-x: auto; font-family: var(--font-data); font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.schema-block .kw { color: #B0D838; }
+.schema-block .type { color: #7AB4D4; }
+.schema-block .comment { color: #6B7260; }
+.schema-block .warm { color: #E08A68; }
+
+/* Tech grid */
+.tech-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 16px; margin-bottom: 24px; }
+.tech-item { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }
+.tech-name { font-family: var(--font-data); font-size: 12px; font-weight: 500; color: var(--text); }
+.tech-role { font-size: 12px; color: var(--text-muted); }
+
+/* API table */
+.api-table { width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-top: 16px; margin-bottom: 24px; }
+.api-table th { font-family: var(--font-data); font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em; background: var(--border-sub); color: var(--text-muted); padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+.api-table td { padding: 10px 14px; border-bottom: 1px solid var(--border-sub); vertical-align: top; }
+.api-table tr:last-child td { border-bottom: none; }
+.api-table tr:hover { background: var(--accent-dim); }
+.method { font-family: var(--font-data); font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; display: inline-block; }
+.method-post { background: rgba(107,138,26,0.15); color: var(--accent); }
+.method-get { background: rgba(74,144,184,0.15); color: var(--signal); }
+.route { font-family: var(--font-data); font-size: 11px; color: var(--text); }
+
+/* Pipeline vertical */
+.pipeline-v { display: flex; flex-direction: column; gap: 0; margin: 32px 0; }
+.pipe-step { display: grid; grid-template-columns: 72px 1fr; gap: 0; position: relative; }
+.pipe-rail { display: flex; flex-direction: column; align-items: center; position: relative; }
+.pipe-num {
+  width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-data); font-size: 13px; font-weight: 600; color: white; flex-shrink: 0; z-index: 2;
+}
+.pipe-num.accent { background: var(--accent); }
+.pipe-num.signal { background: var(--signal); }
+.pipe-num.warm { background: var(--warm); }
+.pipe-num.success { background: var(--success); }
+.pipe-num.warning { background: var(--warning); }
+.pipe-line { flex: 1; width: 2px; background: var(--border); margin-top: 4px; }
+
+.pipe-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 16px 20px; margin-bottom: 16px; margin-top: -4px;
+}
+.pipe-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.pipe-card-title { font-family: var(--font-body); font-weight: 600; font-size: 14px; }
+.pipe-card-sub { font-size: 12px; color: var(--text-sec); margin-bottom: 10px; max-width: none; }
+
+/* Internal flow boxes */
+.flow-steps { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.flow-row { display: flex; align-items: stretch; gap: 8px; }
+.flow-box {
+  flex: 1; background: var(--border-sub); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 12px; font-size: 11px;
+}
+.flow-box.dark { background: var(--olive-900); color: #E8E6E1; border-color: #3a3b37; }
+.flow-box .fb-label { font-family: var(--font-data); font-size: 8px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); display: block; margin-bottom: 3px; }
+.flow-box.dark .fb-label { color: #6B7260; }
+.flow-box code { background: rgba(0,0,0,0.06); font-size: 10px; }
+.flow-box.dark code { background: rgba(255,255,255,0.08); color: #B0D838; }
+.flow-arrow { display: flex; align-items: center; justify-content: center; font-size: 14px; color: var(--paper-400); flex-shrink: 0; width: 20px; }
+.flow-arrow-down { text-align: center; color: var(--paper-400); font-size: 16px; padding: 2px 0; }
+
+/* Message transit box */
+.msg-box {
+  background: var(--olive-900); border-radius: var(--radius-sm); padding: 10px 14px;
+  font-family: var(--font-data); font-size: 10px; line-height: 1.7; color: #C0BEB8;
+  margin: 8px 0; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+}
+.msg-box .kw { color: #B0D838; }
+.msg-box .val { color: #7AB4D4; }
+.msg-box .cmt { color: #6B7260; }
+
+/* Phase separator */
+.phase-sep { display: flex; align-items: center; gap: 12px; margin: 24px 0 8px; padding-left: 72px; }
+.phase-sep-line { flex: 1; height: 1px; background: var(--border); }
+.phase-sep-label {
+  font-family: var(--font-data); font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.12em; padding: 4px 14px; border-radius: 9999px; flex-shrink: 0;
+}
+.phase-sep-label.ingest { background: var(--accent); color: white; }
+.phase-sep-label.embed { background: var(--signal); color: white; }
+.phase-sep-label.query { background: var(--warm); color: white; }
+.phase-sep-label.generate { background: var(--success); color: white; }
+
+/* Mode comparison */
+.mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
+.mode-col { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.mode-header { padding: 12px 16px; font-family: var(--font-data); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.mode-header.premium { background: var(--warm); color: white; }
+.mode-header.offline { background: var(--olive-900); color: #E8E6E1; }
+.mode-body { padding: 16px; background: var(--surface); }
+.mode-step { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-sub); font-size: 12px; }
+.mode-step:last-child { border-bottom: none; }
+.mode-step-num { font-family: var(--font-data); font-size: 10px; font-weight: 600; color: white; width: 22px; height: 22px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.mode-step-num.warm { background: var(--warm); }
+.mode-step-num.dark { background: var(--olive-800); }
+.mode-step-text { color: var(--text-sec); }
+.mode-step-text strong { color: var(--text); font-weight: 500; }
+.mode-step-text code { font-size: 10px; }
+
+/* Fallback chain */
+.fallback { display: flex; align-items: center; gap: 0; margin: 12px 0; flex-wrap: wrap; }
+.fb-node {
+  padding: 6px 14px; border-radius: 8px; font-family: var(--font-data); font-size: 11px; font-weight: 500;
+  border: 1px solid var(--border);
+}
+.fb-node.primary { background: var(--warm); color: white; border-color: var(--warm); }
+.fb-node.secondary { background: rgba(212,160,58,0.1); color: #B08820; border-color: var(--warning); }
+.fb-node.tertiary { background: var(--olive-900); color: #E8E6E1; border-color: #3a3b37; }
+.fb-arrow { font-family: var(--font-data); font-size: 11px; color: var(--text-muted); padding: 0 6px; }
+.fb-label-sm { font-family: var(--font-data); font-size: 9px; color: var(--text-muted); display: block; text-align: center; margin-top: 2px; }
+
+/* Decision box */
+.decision-box {
+  background: var(--surface); border: 2px dashed var(--warning); border-radius: var(--radius-md);
+  padding: 16px 20px; margin: 16px 0; font-size: 12px;
+}
+.decision-box .title { font-weight: 600; font-size: 13px; margin-bottom: 8px; color: #B08820; }
+
+/* Comparison table */
+.compare-table { width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin: 16px 0 24px; }
+.compare-table th { font-family: var(--font-data); font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em; background: var(--border-sub); color: var(--text-muted); padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+.compare-table td { padding: 10px 14px; border-bottom: 1px solid var(--border-sub); vertical-align: top; }
+.compare-table tr:last-child td { border-bottom: none; }
+.compare-table .highlight { background: rgba(107,138,26,0.06); }
+
+/* KPI row */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin: 20px 0; }
+.kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 16px; text-align: center; }
+.kpi-value { font-family: var(--font-data); font-size: 22px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.kpi-label { font-family: var(--font-data); font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
+
+@media (max-width: 800px) { .page { padding: 24px 16px; } h1 { font-size: 24px; } .mode-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="logo"><span class="logo-lite">lite</span><span class="logo-change">Ops</span></div>
+      <span class="data-label" style="margin-top: 4px; display: block;">Sailor &mdash; Architecture RAG</span>
+    </div>
+    <div class="header-meta">Documentation produit &mdash; v2.0<br />Mars 2026</div>
+  </div>
+
+  <h1>Pipeline RAG : Embeddings vectoriels &amp; Recherche semantique</h1>
+  <p class="lead">
+    De l'ingestion des documents a la generation de reponses sourcees &mdash; le pipeline complet
+    avec embeddings Voyage AI, recherche vectorielle en base, et generation Mistral API / Ministral 3B local.
+  </p>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 0 — RÉSUMÉ EXÉCUTIF
+       ═══════════════════════════════════════════════════════════════ -->
+  <h2>0. Avant / Apres</h2>
+  <p>Remplacement du moteur de recherche BM25 par un pipeline d'embeddings vectoriels. Le modele de generation passe de Claude/Ollama a Mistral/Ministral local.</p>
+
+  <table class="compare-table">
+    <thead>
+      <tr><th>Composant</th><th>V1 (actuel)</th><th>V2 (cible)</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Recherche</strong></td>
+        <td>BM25 (TF-IDF lexical, table <code>chunk_terms</code>)</td>
+        <td class="highlight">Cosine similarity sur vecteurs 1024d (Voyage AI <code>voyage-3-lite</code>)</td>
+      </tr>
+      <tr>
+        <td><strong>Stockage vecteurs</strong></td>
+        <td>&mdash;</td>
+        <td class="highlight">SQLite + colonne <code>BLOB</code> (vecteurs Float32) + recherche brute-force</td>
+      </tr>
+      <tr>
+        <td><strong>Generation (online)</strong></td>
+        <td>Claude Sonnet via Anthropic API</td>
+        <td class="highlight">Mistral Large via Mistral API (<code>mistral-large-latest</code>)</td>
+      </tr>
+      <tr>
+        <td><strong>Generation (offline)</strong></td>
+        <td>Ollama generique</td>
+        <td class="highlight">Ministral 3B via Ollama (<code>ministral:3b</code>)</td>
+      </tr>
+      <tr>
+        <td><strong>Detection mode</strong></td>
+        <td>Toggle manuel dans l'UI</td>
+        <td class="highlight">Auto-detection internet au boot + health check periodique</td>
+      </tr>
+      <tr>
+        <td><strong>Embeddings offline</strong></td>
+        <td>&mdash;</td>
+        <td class="highlight">Ollama <code>nomic-embed-text</code> (768d) en fallback si pas de reseau</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- KPI targets -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-value">1024d</div>
+      <div class="kpi-label">Voyage voyage-3-lite</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value">~4ms</div>
+      <div class="kpi-label">Recherche / 1000 chunks</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value">0</div>
+      <div class="kpi-label">Dependance externe DB</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value">&lt;2s</div>
+      <div class="kpi-label">Latence Mistral TTFT</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 1 — PIPELINE COMPLET
+       ═══════════════════════════════════════════════════════════════ -->
+  <h2>1. Pipeline complet</h2>
+
+  <div class="pipeline-v">
+
+    <!-- ── Phase: Ingestion ── -->
+    <div class="phase-sep">
+      <span class="phase-sep-label ingest">Phase 1 &mdash; Ingestion</span>
+      <div class="phase-sep-line"></div>
+    </div>
+
+    <!-- Step 1: Upload + Parse (unchanged) -->
+    <div class="pipe-step">
+      <div class="pipe-rail"><div class="pipe-num accent">1</div><div class="pipe-line"></div></div>
+      <div class="pipe-card">
+        <div class="pipe-card-head">
+          <span class="pipe-card-title">Upload &amp; Parsing</span>
+          <span class="badge badge-backend">Backend</span>
+        </div>
+        <p class="pipe-card-sub">Inchange par rapport a la V1. Le serveur recoit les fichiers (ZIP, PDF, DOCX, HTML, XLSX, TXT), les parse et les decoupe en chunks de ~500 mots avec overlap de 100.</p>
+        <div class="flow-steps">
+          <div class="flow-row">
+            <div class="flow-box"><span class="fb-label">Client &rarr; Server</span><code>POST /api/w/:slug/upload</code><br />Body: <code>multipart/form-data</code></div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-box"><span class="fb-label">Parsing</span><code>parseDocument()</code><br />PDF, DOCX, HTML, XLSX, TXT</div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-box"><span class="fb-label">Chunking</span><code>chunkText(text, 500, 100)</code><br />Decoupe avec overlap</div>
+          </div>
+          <div class="flow-arrow-down">&darr;</div>
+          <div class="flow-row">
+            <div class="flow-box dark"><span class="fb-label">SQL &mdash; Insertion</span><code>INSERT INTO documents (...)</code><br /><code>INSERT INTO chunks (id, document_id, workspace_id, chunk_index, content, tokens_approx)</code></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Phase: Embedding ── -->
+    <div class="phase-sep">
+      <span class="phase-sep-label embed">Phase 2 &mdash; Embedding</span>
+      <div class="phase-sep-line"></div>
+    </div>
+
+    <!-- Step 2: Embed chunks -->
+    <div class="pipe-step">
+      <div class="pipe-rail"><div class="pipe-num signal">2</div><div class="pipe-line"></div></div>
+      <div class="pipe-card">
+        <div class="pipe-card-head">
+          <span class="pipe-card-title">Vectorisation des chunks</span>
+          <span class="badge badge-ai">Voyage AI</span>
+        </div>
+        <p class="pipe-card-sub">Chaque chunk de texte est envoye a l'API Voyage AI pour obtenir un vecteur dense de 1024 dimensions. Les chunks sont envoyes par batch de 128 pour optimiser le debit. En mode hors-ligne, fallback sur Ollama <code>nomic-embed-text</code> (768d).</p>
+
+        <div class="flow-steps">
+          <div class="flow-row">
+            <div class="flow-box"><span class="fb-label">Batch Builder</span>Regroupe les chunks par lots de 128<br />Chaque lot &le; 120,000 tokens</div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-box"><span class="fb-label">Voyage API</span><code>POST https://api.voyageai.com/v1/embeddings</code><br />Model: <code>voyage-3-lite</code><br />Retour: <code>float[1024]</code> par chunk</div>
+          </div>
+          <div class="flow-arrow-down">&darr;</div>
+          <div class="flow-row">
+            <div class="flow-box dark"><span class="fb-label">SQL &mdash; Stockage vecteur</span><code>UPDATE chunks SET embedding = ? WHERE id = ?</code><br /><span style="color:#6B7260">// embedding = Buffer.from(Float32Array) &mdash; BLOB compact</span></div>
+          </div>
+        </div>
+
+        <div class="msg-box"><span class="cmt">// Voyage AI request</span>
+{ <span class="kw">"model"</span>: <span class="val">"voyage-3-lite"</span>,
+  <span class="kw">"input"</span>: [<span class="val">"chunk_1 text..."</span>, <span class="val">"chunk_2 text..."</span>, ...],
+  <span class="kw">"input_type"</span>: <span class="val">"document"</span> }
+
+<span class="cmt">// Response</span>
+{ <span class="kw">"data"</span>: [{ <span class="kw">"embedding"</span>: [0.012, -0.034, ...], <span class="kw">"index"</span>: <span class="val">0</span> }, ...],
+  <span class="kw">"usage"</span>: { <span class="kw">"total_tokens"</span>: <span class="val">8420</span> } }</div>
+
+        <!-- Decision: online vs offline -->
+        <div class="decision-box">
+          <div class="title">&#9888; Decision : Online / Offline</div>
+          <p style="margin:0; font-size: 12px; color: var(--text-sec);">Au demarrage, le serveur teste la connectivite internet via un appel <code>HEAD https://api.mistral.ai/v1/models</code> (timeout 3s). Le resultat determine quel provider d'embedding est utilise :</p>
+          <div class="fallback" style="margin-top: 12px;">
+            <div class="fb-node primary">Voyage AI (1024d)</div>
+            <div class="fb-arrow">&rarr; offline &rarr;</div>
+            <div class="fb-node tertiary">Ollama nomic-embed-text (768d)</div>
+          </div>
+          <p style="margin:8px 0 0; font-size: 11px; color: var(--text-muted);">Les vecteurs de dimensions differentes ne sont pas mixables. Si un workspace a ete cree online, il ne peut pas etre interroge offline (et inversement). Le champ <code>chunks.embed_model</code> trace le modele utilise.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: New schema -->
+    <div class="pipe-step">
+      <div class="pipe-rail"><div class="pipe-num signal">3</div><div class="pipe-line"></div></div>
+      <div class="pipe-card">
+        <div class="pipe-card-head">
+          <span class="pipe-card-title">Schema SQLite mis a jour</span>
+          <span class="badge badge-backend">Backend</span>
+        </div>
+        <p class="pipe-card-sub">La table <code>chunks</code> recoit deux nouvelles colonnes. Les tables BM25 (<code>chunk_terms</code>) sont conservees comme fallback lexical.</p>
+
+        <div class="schema-block"><span class="comment">-- Migration V2 : ajout colonnes embedding</span>
+<span class="kw">ALTER TABLE</span> chunks <span class="kw">ADD COLUMN</span> embedding <span class="type">BLOB</span>;       <span class="comment">-- Float32Array binaire</span>
+<span class="kw">ALTER TABLE</span> chunks <span class="kw">ADD COLUMN</span> embed_model <span class="type">TEXT</span>;   <span class="comment">-- 'voyage-3-lite' | 'nomic-embed-text'</span>
+<span class="kw">ALTER TABLE</span> chunks <span class="kw">ADD COLUMN</span> embed_dim <span class="type">INTEGER</span>; <span class="comment">-- 1024 | 768</span>
+
+<span class="comment">-- Index pour filtrer les chunks embeddés</span>
+<span class="kw">CREATE INDEX</span> idx_chunks_embedded <span class="kw">ON</span> chunks(workspace_id) <span class="kw">WHERE</span> embedding <span class="kw">IS NOT NULL</span>;</div>
+      </div>
+    </div>
+
+    <!-- ── Phase: Query ── -->
+    <div class="phase-sep">
+      <span class="phase-sep-label query">Phase 3 &mdash; Recherche</span>
+      <div class="phase-sep-line"></div>
+    </div>
+
+    <!-- Step 4: Query embedding -->
+    <div class="pipe-step">
+      <div class="pipe-rail"><div class="pipe-num warm">4</div><div class="pipe-line"></div></div>
+      <div class="pipe-card">
+        <div class="pipe-card-head">
+          <span class="pipe-card-title">Embedding de la question</span>
+          <span class="badge badge-ai">Voyage AI</span>
+        </div>
+        <p class="pipe-card-sub">La question de l'utilisateur est convertie en vecteur avec le meme modele que les chunks du workspace. Appel unique a l'API Voyage AI (ou Ollama en offline).</p>
+
+        <div class="flow-steps">
+          <div class="flow-row">
+            <div class="flow-box"><span class="fb-label">Question utilisateur</span>"Quels sont les delais de reclamation ?"</div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-box"><span class="fb-label">Voyage API</span><code>input_type: "query"</code><br />&rarr; <code>float[1024]</code></div>
+          </div>
+        </div>
+
+        <div class="msg-box"><span class="cmt">// Voyage AI request (query mode)</span>
+{ <span class="kw">"model"</span>: <span class="val">"voyage-3-lite"</span>,
+  <span class="kw">"input"</span>: [<span class="val">"Quels sont les delais de reclamation ?"</span>],
+  <span class="kw">"input_type"</span>: <span class="val">"query"</span> }</div>
+      </div>
+    </div>
+
+    <!-- Step 5: Vector search -->
+    <div class="pipe-step">
+      <div class="pipe-rail"><div class="pipe-num warm">5</div><div class="pipe-line"></div></div>
+      <div class="pipe-card">
+        <div class="pipe-card-head">
+          <span class="pipe-card-title">Recherche vectorielle (cosine similarity)</span>
+          <span class="badge badge-vector">Vector Search</span>
+        </div>
+        <p class="pipe-card-sub">Calcul de similarite cosinus entre le vecteur de la question et tous les vecteurs du workspace. Tri par score decroissant, top-K = 8 chunks. Brute-force en memoire &mdash; performant jusqu'a ~50,000 chunks.</p>
+
+        <div class="flow-steps">
+          <div class="flow-row">
+            <div class="flow-box dark"><span class="fb-label">SQL &mdash; Chargement</span><code>SELECT id, document_id, content, embedding FROM chunks</code><br /><code>WHERE workspace_id = ? AND embedding IS NOT NULL</code></div>
+          </div>
+          <div class="flow-arrow-down">&darr;</div>
+          <div class="flow-row">
+            <div class="flow-box"><span class="fb-label">Cosine Similarity</span><code>cos(q, c) = dot(q, c) / (||q|| * ||c||)</code><br />Calcul natif Float32 en Node.js</div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-box"><span class="fb-label">Tri &amp; Selection</span>Sort desc par score<br />Top 8 chunks retenus</div>
+          </div>
+        </div>
+
+        <div class="msg-box"><span class="cmt">// Fonction cosineSimilarity en JS</span>
+<span class="kw">function</span> cosineSimilarity(a, b) {
+  <span class="kw">let</span> dot = <span class="val">0</span>, normA = <span class="val">0</span>, normB = <span class="val">0</span>;
+  <span class="kw">for</span> (<span class="kw">let</span> i = <span class="val">0</span>; i &lt; a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  <span class="kw">return</span> dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}</div>
+      </div>
+    </div>
+
+    <!-- ── Phase: Generation ── -->
+    <div class="phase-sep">
+      <span class="phase-sep-label generate">Phase 4 &mdash; Generation</span>
+      <div class="phase-sep-line"></div>
+    </div>
+
+    <!-- Step 6: LLM call -->
+    <div class="pipe-step">
+      <div class="pipe-rail"><div class="pipe-num success">6</div><div class="pipe-line"></div></div>
+      <div class="pipe-card">
+        <div class="pipe-card-head">
+          <span class="pipe-card-title">Generation de la reponse (Mistral / Ministral)</span>
+          <span class="badge badge-ai">LLM</span>
+        </div>
+        <p class="pipe-card-sub">Les 8 chunks les plus pertinents sont injectes dans le prompt systeme. Le LLM genere une reponse en francais avec citations vers les documents sources.</p>
+
+        <div class="flow-steps">
+          <div class="flow-row">
+            <div class="flow-box"><span class="fb-label">Prompt Builder</span>System prompt + 8 chunks + historique (6 derniers messages)</div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-box"><span class="fb-label">Mistral API</span><code>POST https://api.mistral.ai/v1/chat/completions</code><br />Model: <code>mistral-large-latest</code><br />max_tokens: <code>4096</code></div>
+          </div>
+          <div class="flow-arrow-down">&darr;</div>
+          <div class="flow-row">
+            <div class="flow-box"><span class="fb-label">Post-processing</span>Extraction des <code>[[source:DOC_ID|TITRE]]</code><br />Mapping vers les metadonnees documents<br />Nettoyage markdown</div>
+          </div>
+        </div>
+
+        <div class="msg-box"><span class="cmt">// Mistral API request</span>
+{ <span class="kw">"model"</span>: <span class="val">"mistral-large-latest"</span>,
+  <span class="kw">"messages"</span>: [
+    { <span class="kw">"role"</span>: <span class="val">"system"</span>, <span class="kw">"content"</span>: <span class="val">"Tu es Sailor... SOURCES:\n[Source 1: ...]..."</span> },
+    { <span class="kw">"role"</span>: <span class="val">"user"</span>, <span class="kw">"content"</span>: <span class="val">"Quels sont les delais ?"</span> }
+  ],
+  <span class="kw">"max_tokens"</span>: <span class="val">4096</span>,
+  <span class="kw">"temperature"</span>: <span class="val">0.3</span> }</div>
+      </div>
+    </div>
+
+    <!-- Step 7: Response -->
+    <div class="pipe-step">
+      <div class="pipe-rail"><div class="pipe-num success">7</div></div>
+      <div class="pipe-card">
+        <div class="pipe-card-head">
+          <span class="pipe-card-title">Reponse structuree au client</span>
+          <span class="badge badge-frontend">Frontend</span>
+        </div>
+        <p class="pipe-card-sub">Le frontend recoit la reponse markdown et la liste des sources. Chaque source est cliquable et ouvre le document dans le panneau lateral.</p>
+
+        <div class="msg-box"><span class="cmt">// Response JSON</span>
+{ <span class="kw">"response"</span>: <span class="val">"Les delais de reclamation sont de 2 mois..."</span>,
+  <span class="kw">"sources"</span>: [
+    { <span class="kw">"id"</span>: <span class="val">"doc_abc"</span>, <span class="kw">"title"</span>: <span class="val">"Processus de reclamation"</span>, <span class="kw">"relevance"</span>: <span class="val">0.87</span> },
+    { <span class="kw">"id"</span>: <span class="val">"doc_def"</span>, <span class="kw">"title"</span>: <span class="val">"Charte qualite"</span>, <span class="kw">"relevance"</span>: <span class="val">0.72</span> }
+  ],
+  <span class="kw">"chunks_used"</span>: <span class="val">8</span>,
+  <span class="kw">"ai_provider"</span>: <span class="val">"mistral"</span> }</div>
+      </div>
+    </div>
+
+  </div><!-- /pipeline-v -->
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 2 — MODES ONLINE / OFFLINE
+       ═══════════════════════════════════════════════════════════════ -->
+  <h2>2. Comparaison Online / Offline</h2>
+  <p>Sailor detecte automatiquement la connectivite au demarrage et toutes les 60 secondes. Aucune intervention manuelle requise. Le mode change dynamiquement.</p>
+
+  <div class="mode-grid">
+    <div class="mode-col">
+      <div class="mode-header premium">Online &mdash; Mistral + Voyage AI</div>
+      <div class="mode-body">
+        <div class="mode-step">
+          <div class="mode-step-num warm">1</div>
+          <div class="mode-step-text"><strong>Embedding</strong> : Voyage AI <code>voyage-3-lite</code> &mdash; 1024 dimensions, optimise pour le francais</div>
+        </div>
+        <div class="mode-step">
+          <div class="mode-step-num warm">2</div>
+          <div class="mode-step-text"><strong>Recherche</strong> : Cosine similarity sur vecteurs 1024d</div>
+        </div>
+        <div class="mode-step">
+          <div class="mode-step-num warm">3</div>
+          <div class="mode-step-text"><strong>Generation</strong> : <code>mistral-large-latest</code> via Mistral API &mdash; 128k tokens context, multilingue natif</div>
+        </div>
+        <div class="mode-step">
+          <div class="mode-step-num warm">4</div>
+          <div class="mode-step-text"><strong>Qualite</strong> : Reponses riches, nuancees, sources precises. Ideal pour usage courant.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mode-col">
+      <div class="mode-header offline">Offline &mdash; Ministral 3B + Nomic Embed</div>
+      <div class="mode-body">
+        <div class="mode-step">
+          <div class="mode-step-num dark">1</div>
+          <div class="mode-step-text"><strong>Embedding</strong> : Ollama <code>nomic-embed-text</code> &mdash; 768 dimensions, tourne 100% local</div>
+        </div>
+        <div class="mode-step">
+          <div class="mode-step-num dark">2</div>
+          <div class="mode-step-text"><strong>Recherche</strong> : Cosine similarity sur vecteurs 768d + fallback BM25 si pas de vecteurs</div>
+        </div>
+        <div class="mode-step">
+          <div class="mode-step-num dark">3</div>
+          <div class="mode-step-text"><strong>Generation</strong> : <code>ministral:3b</code> via Ollama &mdash; 32k tokens context, RAM &le; 4GB</div>
+        </div>
+        <div class="mode-step">
+          <div class="mode-step-num dark">4</div>
+          <div class="mode-step-text"><strong>Qualite</strong> : Reponses correctes, formatage plus simple. Zero dependance reseau.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Chaine de fallback LLM</h3>
+  <div class="fallback">
+    <div><div class="fb-node primary">Mistral Large API</div><div class="fb-label-sm">Prioritaire</div></div>
+    <div class="fb-arrow">&rarr; timeout / erreur &rarr;</div>
+    <div><div class="fb-node secondary">Mistral Small API</div><div class="fb-label-sm">Retry rapide</div></div>
+    <div class="fb-arrow">&rarr; pas de reseau &rarr;</div>
+    <div><div class="fb-node tertiary">Ministral 3B (Ollama)</div><div class="fb-label-sm">Local</div></div>
+  </div>
+
+  <h3>Chaine de fallback Embeddings</h3>
+  <div class="fallback">
+    <div><div class="fb-node primary">Voyage AI voyage-3-lite</div><div class="fb-label-sm">1024d &bull; Prioritaire</div></div>
+    <div class="fb-arrow">&rarr; pas de reseau &rarr;</div>
+    <div><div class="fb-node tertiary">Ollama nomic-embed-text</div><div class="fb-label-sm">768d &bull; Local</div></div>
+    <div class="fb-arrow">&rarr; pas d'Ollama &rarr;</div>
+    <div><div class="fb-node secondary">BM25 lexical</div><div class="fb-label-sm">Fallback ultime</div></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 3 — STACK TECHNIQUE
+       ═══════════════════════════════════════════════════════════════ -->
+  <h2>3. Stack technique</h2>
+
+  <div class="tech-grid">
+    <div class="tech-item">
+      <span class="tech-name">Voyage AI</span>
+      <span class="tech-role">Embeddings 1024d, modele voyage-3-lite</span>
+    </div>
+    <div class="tech-item">
+      <span class="tech-name">Mistral API</span>
+      <span class="tech-role">LLM generation, mistral-large-latest</span>
+    </div>
+    <div class="tech-item">
+      <span class="tech-name">Ollama</span>
+      <span class="tech-role">Fallback local : ministral:3b + nomic-embed-text</span>
+    </div>
+    <div class="tech-item">
+      <span class="tech-name">SQLite (better-sqlite3)</span>
+      <span class="tech-role">Stockage documents, chunks, vecteurs (BLOB)</span>
+    </div>
+    <div class="tech-item">
+      <span class="tech-name">Express.js</span>
+      <span class="tech-role">API REST, upload, middleware workspace</span>
+    </div>
+    <div class="tech-item">
+      <span class="tech-name">React + Vite</span>
+      <span class="tech-role">Frontend SPA, design system Lite Ops</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 4 — API ENDPOINTS
+       ═══════════════════════════════════════════════════════════════ -->
+  <h2>4. Endpoints modifies</h2>
+
+  <table class="api-table">
+    <thead>
+      <tr><th>Methode</th><th>Route</th><th>Changement V2</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="method method-post">POST</span></td>
+        <td class="route">/api/w/:slug/upload</td>
+        <td>Apres insertion des chunks, appel <code>embedChunks()</code> en async &mdash; n'attend pas la fin pour repondre au client</td>
+      </tr>
+      <tr>
+        <td><span class="method method-post">POST</span></td>
+        <td class="route">/api/w/:slug/chat</td>
+        <td>Remplace <code>searchBM25()</code> par <code>searchVectors()</code> &mdash; embed la question, cosine similarity, top-8</td>
+      </tr>
+      <tr>
+        <td><span class="method method-get">GET</span></td>
+        <td class="route">/api/ai/mode</td>
+        <td>Retourne le provider actif (<code>mistral</code> | <code>ollama</code>) + status des embeddings</td>
+      </tr>
+      <tr>
+        <td><span class="method method-get">GET</span></td>
+        <td class="route">/api/w/:slug/stats</td>
+        <td>Ajoute <code>embedded_chunks</code>, <code>embed_model</code>, <code>embed_coverage</code> (% chunks embedes)</td>
+      </tr>
+      <tr>
+        <td><span class="method method-post">POST</span></td>
+        <td class="route">/api/w/:slug/reembed</td>
+        <td><strong>Nouveau</strong> &mdash; Re-embed tous les chunks d'un workspace (utile si changement de mode)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 5 — VARIABLES D'ENVIRONNEMENT
+       ═══════════════════════════════════════════════════════════════ -->
+  <h2>5. Variables d'environnement</h2>
+
+  <div class="schema-block"><span class="comment"># sailor/server/.env</span>
+
+<span class="comment"># -- Voyage AI (embeddings) --</span>
+<span class="kw">VOYAGE_API_KEY</span>=<span class="warm">pa-JGn5Eg2c...EQZ</span>
+<span class="kw">VOYAGE_MODEL</span>=<span class="type">voyage-3-lite</span>           <span class="comment"># default</span>
+
+<span class="comment"># -- Mistral (LLM generation) --</span>
+<span class="kw">MISTRAL_API_KEY</span>=<span class="warm">BcPFjFgV5z...oohL</span>
+<span class="kw">MISTRAL_MODEL</span>=<span class="type">mistral-large-latest</span>    <span class="comment"># default, fallback: mistral-small-latest</span>
+
+<span class="comment"># -- Ollama (local fallback) --</span>
+<span class="kw">OLLAMA_BASE_URL</span>=<span class="type">http://localhost:11434</span> <span class="comment"># default</span>
+<span class="kw">OLLAMA_MODEL</span>=<span class="type">ministral:3b</span>             <span class="comment"># LLM local</span>
+<span class="kw">OLLAMA_EMBED_MODEL</span>=<span class="type">nomic-embed-text</span>   <span class="comment"># embedding local</span>
+
+<span class="comment"># -- Server --</span>
+<span class="kw">PORT</span>=<span class="type">3003</span>
+<span class="kw">DB_PATH</span>=<span class="type">./sailor.db</span></div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 6 — PLAN D'IMPLEMENTATION
+       ═══════════════════════════════════════════════════════════════ -->
+  <h2>6. Plan d'implementation</h2>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Etape 1 &mdash; Migration schema &amp; embeddings</span><span class="badge badge-backend">Backend</span></div>
+    <p style="font-size:12px; color: var(--text-sec);">Ajouter les colonnes <code>embedding</code>, <code>embed_model</code>, <code>embed_dim</code> a la table chunks. Creer les fonctions <code>embedWithVoyage()</code>, <code>embedWithOllama()</code>, <code>cosineSimilarity()</code>, <code>searchVectors()</code>.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Etape 2 &mdash; Detection connectivite &amp; routing IA</span><span class="badge badge-backend">Backend</span></div>
+    <p style="font-size:12px; color: var(--text-sec);">Fonction <code>checkConnectivity()</code> appelee au boot et toutes les 60s. Route vers Mistral API ou Ollama automatiquement. Le changement est transparent pour le frontend.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Etape 3 &mdash; Integration Mistral API</span><span class="badge badge-ai">AI</span></div>
+    <p style="font-size:12px; color: var(--text-sec);">Remplacer <code>aiChatPremium()</code> (Anthropic) par appel Mistral API. Chaine de fallback : <code>mistral-large-latest</code> &rarr; <code>mistral-small-latest</code> &rarr; <code>ministral:3b</code> local.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Etape 4 &mdash; Embedding async a l'upload</span><span class="badge badge-backend">Backend</span></div>
+    <p style="font-size:12px; color: var(--text-sec);">Apres l'upload, lancer l'embedding en arriere-plan (non bloquant). Le frontend affiche une progression. Le chat est disponible des que les premiers chunks sont embedes (fallback BM25 sinon).</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Etape 5 &mdash; Tests &amp; validation</span><span class="badge badge-frontend">Frontend</span></div>
+    <p style="font-size:12px; color: var(--text-sec);">Tester avec le dataset mutuelle (50 docs). Verifier la qualite des reponses en mode Mistral vs Ministral. Valider le fallback automatique en coupant le reseau.</p>
+  </div>
+
+  <p style="margin-top: 32px; font-size: 13px; color: var(--text-muted); font-family: var(--font-data); letter-spacing: 0.02em;">&copy; Lite Ops &mdash; Mars 2026 &mdash; Architecture Sailor v2.0</p>
+
+</div><!-- /page -->
+</body>
+</html>

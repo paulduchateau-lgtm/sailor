@@ -1,0 +1,173 @@
+/**
+ * Sailor (AG002) — Design Tokens
+ * REF-DS/BRIDGE/SAILOR v1.0
+ *
+ * Bridge: --mp-* rebanchés sur @liteops/ds tokens.
+ * Les composants continuent d'utiliser --mp-* sans modification.
+ * @liteops/ds/tokens/all.css est chargé AVANT ce fichier (via main.jsx).
+ *
+ * Règles DS appliquées :
+ * R02 — DM Sans max 500
+ * R09 — Accent T2 = Green (#A5D900) — même couleur sur tous les produits
+ * R10 — Aucun bleu signal
+ */
+
+/* ── Google Fonts : DM Sans + JetBrains Mono uniquement ─────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Source Serif 4 → supprimé.  IBM Plex Mono → JetBrains Mono. */
+  --font-display: var(--font-sans);
+  --font-body:    var(--font-sans);
+  --font-data:    var(--font-mono);
+
+  --radius-sm: 6px;
+  --radius-md: 6px;
+  --radius-lg: 6px;
+  --radius-pill: 9999px;
+}
+
+/* ── Thème sombre — RAG documentaire (dark par défaut) ───────────────────── */
+[data-theme="dark"], :root {
+  --mp-bg:             var(--color-dark);
+  --mp-bg-elevated:    #363530;
+  --mp-bg-card:        #363530;
+  --mp-bg-input:       #363530;
+  --mp-text:           var(--color-paper);
+  --mp-text-secondary: var(--color-chrome);
+  --mp-text-muted:     var(--color-sage);
+  --mp-border:         rgba(240, 238, 235, 0.08);
+  --mp-border-subtle:  rgba(240, 238, 235, 0.05);
+
+  /* Accent T2 = Green */
+  --mp-accent:         var(--color-green);
+  --mp-accent-text:    var(--color-green);
+  --mp-accent-on:      var(--color-dark);
+  --mp-accent-dim:     rgba(165, 217, 0, 0.08);
+  --mp-accent-subtle:  rgba(165, 217, 0, 0.04);
+
+  --mp-nav-hover:      rgba(240, 238, 235, 0.04);
+  /* Bleu supprimé → chrome neutre */
+  --mp-signal:         var(--color-chrome);
+  --mp-warm:           var(--color-copper);
+  --mp-success:        #68B474;
+  --mp-warning:        #E8C46A;
+  --mp-shadow:         0 2px 8px rgba(0,0,0,0.3);
+
+  color-scheme: dark;
+}
+
+/* ── Thème clair ──────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --mp-bg:             var(--color-warm);
+  --mp-bg-elevated:    var(--color-paper);
+  --mp-bg-card:        var(--color-paper);
+  --mp-bg-input:       var(--color-paper);
+  --mp-text:           var(--color-ink);
+  --mp-text-secondary: var(--color-moss);
+  --mp-text-muted:     var(--color-sage);
+  --mp-border:         var(--color-rule);
+  --mp-border-subtle:  var(--color-fog);
+
+  /* Accent T2 = Green */
+  --mp-accent:         var(--color-green);
+  --mp-accent-text:    var(--color-green);
+  --mp-accent-on:      var(--color-dark);
+  --mp-accent-dim:     rgba(165, 217, 0, 0.06);
+  --mp-accent-subtle:  rgba(165, 217, 0, 0.03);
+
+  --mp-nav-hover:      rgba(0, 0, 0, 0.04);
+  --mp-signal:         var(--color-steel);
+  --mp-warm:           var(--color-copper);
+  --mp-success:        #3A8A4A;
+  --mp-warning:        var(--color-amber);
+  --mp-shadow:         0 2px 8px rgba(0,0,0,0.06);
+
+  color-scheme: light;
+}
+
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--mp-bg);
+  color: var(--mp-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Utility classes ──────────────────────────────────────────────────────── */
+.data-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--mp-text-muted);
+}
+
+.data-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--mp-success);
+  animation: pulse-glow 4s ease-in-out infinite;
+}
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px rgba(160,105,74,0.3); }
+  50%      { opacity: 0.6; box-shadow: 0 0 8px rgba(160,105,74,0.5); }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fade-up { animation: fadeUp 0.35s ease-out forwards; }
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-chrome-d);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-steel); }
+
+/* ── Focus ────────────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--mp-accent);
+  outline-offset: 2px;
+}
+
+/* ── Source badge animations ──────────────────────────────────────────────── */
+.source-badge { transition: all 0.15s ease; }
+.source-badge:hover {
+  border-color: var(--mp-accent) !important;
+  color: var(--mp-accent-text) !important;
+}
+
+/* ── Markdown in chat ─────────────────────────────────────────────────────── */
+.chat-markdown p { margin-bottom: 8px; }
+.chat-markdown p:last-child { margin-bottom: 0; }
+.chat-markdown ul, .chat-markdown ol { padding-left: 20px; margin-bottom: 8px; }
+.chat-markdown li { margin-bottom: 4px; }
+.chat-markdown strong { font-weight: 500; }
+.chat-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--mp-bg-elevated);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
