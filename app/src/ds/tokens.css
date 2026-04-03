@@ -1,0 +1,279 @@
+/**
+ * @liteops/ds — Tokens couleur
+ * REF-DS/TOKENS/COLORS v1.0
+ *
+ * Palette warm-désaturée. 14 tokens.
+ * Aucun bleu. Aucun gris froid. Aucune teinte corporate.
+ */
+
+:root {
+  /* ─── Fondations ─────────────────────────────────── */
+  --color-ink:          #1C1C1A;   /* Texte principal, headings */
+  --color-paper:        #F0EEEB;   /* Surface canonique T1 */
+  --color-warm:         #F6F4F0;   /* Surface élevée, hero T2 */
+  --color-dark:         #1E1D1B;   /* Surface sombre, fond T2 */
+  --color-white:        #FFFFFF;   /* Surface T3 */
+
+  /* ─── Signal ─────────────────────────────────────── */
+  --color-green:        #A5D900;   /* Signal unique — actif, CTA primaire */
+  --color-green-tint:   #F2F3ED;   /* Fond code blocks, callouts subtils */
+  --color-green-20:     #EEF5CC;   /* Badge PASS, statuts positifs */
+
+  /* ─── Chrome / Métallique ────────────────────────── */
+  --color-fog:          #E9E6E1;   /* Cards, surfaces secondaires */
+  --color-rule:         #D5D1CB;   /* Bordures, séparateurs, hairlines */
+  --color-chrome-l:     #CDC9C2;   /* Métallique clair, gradient start */
+  --color-chrome:       #B8B5AE;   /* Accent métallique principal */
+  --color-chrome-d:     #9A968E;   /* Métallique sombre, gradient end */
+
+  /* ─── Texte neutre ───────────────────────────────── */
+  --color-sage:         #908E85;   /* Labels muted, placeholders, annotations */
+  --color-moss:         #6B6B60;   /* Texte tertiaire, captions */
+  --color-steel:        #7D7A73;   /* Labels lourds, headings secondaires */
+
+  /* ─── Accents agents ─────────────────────────────── */
+  --color-amber:        #C4872E;   /* Pilot (AG001) — expertise, business logic */
+  --color-copper:       #A0694A;   /* Sailor (AG002) — orchestration, stratégie */
+
+  /* ─── Fonctionnel ────────────────────────────────── */
+  --color-alert:        #B85A40;   /* Erreurs, warnings — terracotta, pas rouge vif */
+}
+/**
+ * @liteops/ds — Tokens typographiques
+ * REF-DS/TOKENS/TYPOGRAPHY v1.0
+ *
+ * 2 familles uniquement :
+ *   DM Sans     — texte courant, max weight 500
+ *   JetBrains Mono — labels, codes, monospace
+ *
+ * JAMAIS : Source Serif 4, IBM Plex Mono, Inter, ou toute autre famille.
+ */
+
+/* Google Fonts — charger une seule fois au niveau app */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ─── Familles ───────────────────────────────────── */
+  --font-sans:   'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-mono:   'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+
+  /* ─── Échelle de taille ──────────────────────────── */
+  --text-display:   32px;   /* DM Sans 300, tracking -0.02em */
+  --text-headline:  24px;   /* DM Sans 300, tracking -0.015em */
+  --text-title:     18px;   /* DM Sans 400 */
+  --text-body-lg:   15px;   /* DM Sans 400 */
+  --text-body:      14px;   /* DM Sans 400 */
+  --text-body-sm:   13px;   /* DM Sans 400 */
+  --text-caption:   12px;   /* DM Sans 400 */
+  --text-label:     10px;   /* JetBrains Mono 500, UPPERCASE, tracking 0.15em */
+  --text-label-sm:  9px;    /* JetBrains Mono 500, UPPERCASE, tracking 0.14em */
+  --text-label-xs:  8px;    /* JetBrains Mono 500, UPPERCASE, tracking 0.18em */
+  --text-code:      12px;   /* JetBrains Mono 400 */
+  --text-code-sm:   11px;   /* JetBrains Mono 400 */
+
+  /* ─── Graisses ───────────────────────────────────── */
+  --weight-light:   300;
+  --weight-regular: 400;
+  --weight-medium:  500;
+  /* RÈGLE : DM Sans n'excède jamais 500. Jamais de 600, 700 dans l'UI. */
+
+  /* ─── Interlettrage ──────────────────────────────── */
+  --tracking-tight:  -0.02em;   /* display */
+  --tracking-snug:   -0.015em;  /* headline */
+  --tracking-normal:  0;        /* body */
+  --tracking-mono:    0.12em;   /* mono labels minimum */
+  --tracking-mono-md: 0.15em;   /* mono labels standard */
+  --tracking-mono-lg: 0.18em;   /* mono labels large */
+  --tracking-mono-xl: 0.22em;   /* logo */
+
+  /* ─── Hauteur de ligne ───────────────────────────── */
+  --leading-tight:  1.05;
+  --leading-snug:   1.15;
+  --leading-normal: 1.5;
+  --leading-relaxed:1.65;
+  --leading-code:   1.8;
+}
+
+/* ─── Classes utilitaires ────────────────────────────────────────────────── */
+
+.ds-display {
+  font-family: var(--font-sans);
+  font-size: var(--text-display);
+  font-weight: var(--weight-light);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+}
+
+.ds-headline {
+  font-family: var(--font-sans);
+  font-size: var(--text-headline);
+  font-weight: var(--weight-light);
+  letter-spacing: var(--tracking-snug);
+  line-height: var(--leading-snug);
+}
+
+.ds-title {
+  font-family: var(--font-sans);
+  font-size: var(--text-title);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-snug);
+}
+
+.ds-body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-relaxed);
+}
+
+.ds-caption {
+  font-family: var(--font-sans);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+}
+
+/* Mono label — toujours uppercase, toujours tracké */
+.ds-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-mono-md);
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.ds-label-sm {
+  font-family: var(--font-mono);
+  font-size: var(--text-label-sm);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-mono-md);
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.ds-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-code);
+}
+/**
+ * @liteops/ds — Tokens d'espacement
+ * REF-DS/TOKENS/SPACING v1.0
+ *
+ * Grille de 4px. Tout espacement est un multiple de 4.
+ */
+
+:root {
+  --sp-0:  0;
+  --sp-1:  4px;
+  --sp-2:  8px;
+  --sp-3:  12px;
+  --sp-4:  16px;
+  --sp-5:  20px;
+  --sp-6:  24px;
+  --sp-7:  28px;
+  --sp-8:  32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-14: 56px;
+  --sp-16: 64px;
+  --sp-20: 80px;
+  --sp-24: 96px;
+  --sp-32: 128px;
+
+  /* ─── Border radius par tier ─────────────────────── */
+  --radius-t1: 0;     /* T1 Public — zéro border-radius */
+  --radius-t2: 6px;   /* T2 Product — arrondi doux */
+  --radius-t3: 0;     /* T3 Docs — zéro border-radius */
+
+  /* ─── Épaisseurs de bordure ──────────────────────── */
+  --border-hairline: 1px;
+  --border-rule:     1px;
+
+  /* ─── Largeurs max ───────────────────────────────── */
+  --max-w-content: 1240px;
+  --max-w-text:    640px;
+  --max-w-narrow:  520px;
+}
+/**
+ * @liteops/ds — Tokens par tier
+ * REF-DS/TOKENS/TIERS v1.0
+ *
+ * Appliquer la classe .tier-t1, .tier-t2, ou .tier-t3
+ * sur l'élément racine du projet pour activer les overrides.
+ *
+ * Ces tokens surchargent les valeurs sémantiques communes.
+ */
+
+/* ─── T1 — Public ────────────────────────────────────────────────────────── */
+/**
+ * liteops-website, brochures, pitch decks, partner programme
+ * Esprit : Chaleureux · Désert · Architectural
+ */
+.tier-t1,
+[data-tier="t1"] {
+  --tier-bg:          var(--color-paper);       /* #F0EEEB */
+  --tier-bg-elevated: var(--color-warm);        /* #F6F4F0 */
+  --tier-surface:     var(--color-fog);         /* #E9E6E1 */
+  --tier-text:        var(--color-ink);         /* #1C1C1A */
+  --tier-text-muted:  var(--color-moss);        /* #6B6B60 */
+  --tier-text-dim:    var(--color-sage);        /* #908E85 */
+  --tier-accent:      var(--color-green);       /* #A5D900 */
+  --tier-border:      var(--color-rule);        /* #D5D1CB */
+  --tier-radius:      var(--radius-t1);         /* 0 */
+  --tier-pattern:     ds-grain;                 /* texture grain */
+}
+
+/* ─── T2 — Product ───────────────────────────────────────────────────────── */
+/**
+ * Pilot, Sailor, Matchmaker, Simulateur, Roadmap
+ * Esprit : Clean · Fonctionnel · Sémantique
+ */
+.tier-t2,
+[data-tier="t2"] {
+  --tier-bg:          var(--color-warm);        /* #F6F4F0 */
+  --tier-bg-elevated: var(--color-paper);       /* #F0EEEB */
+  --tier-surface:     var(--color-fog);         /* #E9E6E1 */
+  --tier-text:        var(--color-ink);         /* #1C1C1A */
+  --tier-text-muted:  var(--color-moss);        /* #6B6B60 */
+  --tier-text-dim:    var(--color-sage);        /* #908E85 */
+  --tier-accent:      var(--color-amber);       /* #C4872E */
+  --tier-border:      var(--color-fog);         /* #E9E6E1 */
+  --tier-radius:      var(--radius-t2);         /* 6px */
+  --tier-pattern:     none;
+}
+
+/* ─── T3 — Docs ──────────────────────────────────────────────────────────── */
+/**
+ * API, SDK, specs opérateurs, Fumadocs
+ * Esprit : Teenage Engineering · Rigoureux · Minimal
+ */
+.tier-t3,
+[data-tier="t3"] {
+  --tier-bg:          var(--color-white);       /* #FFFFFF */
+  --tier-bg-elevated: var(--color-green-tint);  /* #F2F3ED */
+  --tier-surface:     var(--color-fog);         /* #E9E6E1 */
+  --tier-text:        var(--color-ink);         /* #1C1C1A */
+  --tier-text-muted:  var(--color-moss);        /* #6B6B60 */
+  --tier-text-dim:    var(--color-steel);       /* #7D7A73 */
+  --tier-accent:      var(--color-ink);         /* #1C1C1A — accent sobre */
+  --tier-border:      var(--color-rule);        /* #D5D1CB */
+  --tier-radius:      var(--radius-t3);         /* 0 */
+  --tier-pattern:     ds-dot-grid;              /* grille de points */
+}
+
+/* ─── Variantes sombres par agent (T2) ───────────────────────────────────── */
+/**
+ * Appliquer sur les cards/zones agent-spécifiques en T2
+ */
+[data-agent="pilot"] {
+  --agent-accent: var(--color-amber);     /* AG001 */
+}
+[data-agent="sailor"] {
+  --agent-accent: var(--color-copper);    /* AG002 */
+}
+[data-agent="matchmaker"] {
+  --agent-accent: var(--color-green);     /* AG003 */
+}
