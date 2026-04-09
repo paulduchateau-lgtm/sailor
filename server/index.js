@@ -5,7 +5,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import Database from "better-sqlite3";
+import { createClient } from "@libsql/client";
 import { v4 as uuid } from "uuid";
 import mammoth from "mammoth";
 import * as cheerio from "cheerio";
@@ -15,131 +15,164 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3003;
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "sailor.db");
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, "uploads");
 
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!process.env.VERCEL) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
 
 // ── Database ────────────────────────────────────────────────────────────────
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL || "file:./sailor.db",
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS workspaces (
-    id TEXT PRIMARY KEY,
-    slug TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    industry TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
+// ── Schema init (async — must be called before any route handler) ────────────
+let initialized = false;
 
-  CREATE TABLE IF NOT EXISTS documents (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    filename TEXT NOT NULL,
-    original_name TEXT NOT NULL,
-    type TEXT NOT NULL,
-    title TEXT DEFAULT '',
-    categorie TEXT DEFAULT '',
-    auteur TEXT DEFAULT '',
-    date_creation TEXT DEFAULT '',
-    mots_cles TEXT DEFAULT '',
-    content_text TEXT DEFAULT '',
-    content_html TEXT DEFAULT '',
-    file_size INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-  );
+async function initDB() {
+  if (initialized) return;
 
-  CREATE TABLE IF NOT EXISTS chunks (
-    id TEXT PRIMARY KEY,
-    document_id TEXT NOT NULL,
-    workspace_id TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    tokens_approx INTEGER DEFAULT 0,
-    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-  );
+  await db.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      industry TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
 
-  CREATE TABLE IF NOT EXISTS chunk_terms (
-    chunk_id TEXT NOT NULL,
-    term TEXT NOT NULL,
-    tf REAL NOT NULL,
-    FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
-  );
+    CREATE TABLE IF NOT EXISTS documents (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT DEFAULT '',
+      categorie TEXT DEFAULT '',
+      auteur TEXT DEFAULT '',
+      date_creation TEXT DEFAULT '',
+      mots_cles TEXT DEFAULT '',
+      content_text TEXT DEFAULT '',
+      content_html TEXT DEFAULT '',
+      file_size INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
 
-  CREATE INDEX IF NOT EXISTS idx_chunk_terms_term ON chunk_terms(term);
-  CREATE INDEX IF NOT EXISTS idx_chunks_workspace ON chunks(workspace_id);
-  CREATE INDEX IF NOT EXISTS idx_documents_workspace ON documents(workspace_id);
+    CREATE TABLE IF NOT EXISTS chunks (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      tokens_approx INTEGER DEFAULT 0,
+      FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+    );
 
-  CREATE TABLE IF NOT EXISTS chat_sessions (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    title TEXT DEFAULT 'Nouvelle conversation',
-    messages TEXT DEFAULT '[]',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-  );
+    CREATE TABLE IF NOT EXISTS chunk_terms (
+      chunk_id TEXT NOT NULL,
+      term TEXT NOT NULL,
+      tf REAL NOT NULL,
+      FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+    );
 
-  CREATE TABLE IF NOT EXISTS workspace_context (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT UNIQUE NOT NULL,
-    project_name TEXT DEFAULT '',
-    description TEXT DEFAULT '',
-    objectives TEXT DEFAULT '',
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-  );
-`);
+    CREATE INDEX IF NOT EXISTS idx_chunk_terms_term ON chunk_terms(term);
+    CREATE INDEX IF NOT EXISTS idx_chunks_workspace ON chunks(workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_documents_workspace ON documents(workspace_id);
 
-// ── V2 Migration: add embedding columns ─────────────────────────────────────
-try {
-  db.exec(`ALTER TABLE chunks ADD COLUMN embedding BLOB`);
-} catch { /* column already exists */ }
-try {
-  db.exec(`ALTER TABLE chunks ADD COLUMN embed_model TEXT`);
-} catch { /* column already exists */ }
-try {
-  db.exec(`ALTER TABLE chunks ADD COLUMN embed_dim INTEGER`);
-} catch { /* column already exists */ }
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      title TEXT DEFAULT 'Nouvelle conversation',
+      messages TEXT DEFAULT '[]',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_context (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT UNIQUE NOT NULL,
+      project_name TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      objectives TEXT DEFAULT '',
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+  `);
+
+  // V2 Migration: add embedding columns
+  try { await db.execute("ALTER TABLE chunks ADD COLUMN embedding BLOB"); } catch { /* column already exists */ }
+  try { await db.execute("ALTER TABLE chunks ADD COLUMN embed_model TEXT"); } catch { /* column already exists */ }
+  try { await db.execute("ALTER TABLE chunks ADD COLUMN embed_dim INTEGER"); } catch { /* column already exists */ }
+
+  initialized = true;
+}
 
 // ── Connectivity state ──────────────────────────────────────────────────────
 let isOnline = true;
 
 async function checkConnectivity() {
+  // Try Anthropic first, then Mistral, then generic internet check
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.MISTRAL_API_KEY;
+  if (!apiKey) { isOnline = false; return false; }
+
   try {
-    const r = await fetch("https://api.mistral.ai/v1/models", {
-      method: "GET",
-      headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY || "test"}` },
-      signal: AbortSignal.timeout(5000),
-    });
-    isOnline = r.ok || r.status === 401 || r.status === 403; // any response = network up
+    if (process.env.ANTHROPIC_API_KEY) {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": process.env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1, messages: [{ role: "user", content: "." }] }),
+        signal: AbortSignal.timeout(5000),
+      });
+      isOnline = r.ok || r.status === 401 || r.status === 403 || r.status === 400;
+    } else {
+      const r = await fetch("https://api.mistral.ai/v1/models", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      isOnline = r.ok || r.status === 401 || r.status === 403;
+    }
   } catch {
     isOnline = false;
   }
   return isOnline;
 }
 
+function getLLMProvider() {
+  if (process.env.ANTHROPIC_API_KEY) return "Anthropic Claude";
+  if (process.env.MISTRAL_API_KEY) return "Mistral";
+  return "Ollama local";
+}
+
 // Check connectivity at boot and every 60s
 checkConnectivity().then((online) => {
-  console.log(`  🌐 Connectivité : ${online ? "ONLINE (Mistral + Voyage AI)" : "OFFLINE (Ministral 3B local)"}`);
+  console.log(`  Connectivité : ${online ? `ONLINE (${getLLMProvider()})` : "OFFLINE (Ollama local)"}`);
 });
-setInterval(checkConnectivity, 60_000);
+if (!process.env.VERCEL) setInterval(checkConnectivity, 60_000);
 
 // ── IDF cache (workspace-scoped, BM25 fallback) ────────────────────────────
 const idfCache = new Map();
 
-function buildIdf(workspaceId) {
-  const totalChunks = db.prepare("SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ?").get(workspaceId).c;
+async function buildIdf(workspaceId) {
+  const totalResult = await db.execute({ sql: "SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ?", args: [workspaceId] });
+  const totalChunks = totalResult.rows[0]?.c ?? 0;
   if (totalChunks === 0) return new Map();
-  const rows = db.prepare(`
-    SELECT term, COUNT(DISTINCT chunk_id) as df
-    FROM chunk_terms ct JOIN chunks c ON ct.chunk_id = c.id
-    WHERE c.workspace_id = ? GROUP BY term
-  `).all(workspaceId);
+
+  const rows = (await db.execute({
+    sql: `SELECT term, COUNT(DISTINCT chunk_id) as df
+          FROM chunk_terms ct JOIN chunks c ON ct.chunk_id = c.id
+          WHERE c.workspace_id = ? GROUP BY term`,
+    args: [workspaceId],
+  })).rows;
+
   const idf = new Map();
   for (const r of rows) {
     idf.set(r.term, Math.log((totalChunks - r.df + 0.5) / (r.df + 0.5) + 1));
@@ -147,8 +180,8 @@ function buildIdf(workspaceId) {
   return idf;
 }
 
-function getIdf(workspaceId) {
-  if (!idfCache.has(workspaceId)) idfCache.set(workspaceId, buildIdf(workspaceId));
+async function getIdf(workspaceId) {
+  if (!idfCache.has(workspaceId)) idfCache.set(workspaceId, await buildIdf(workspaceId));
   return idfCache.get(workspaceId);
 }
 
@@ -243,11 +276,11 @@ async function embedTexts(texts, inputType = "document") {
     // Priority: Mistral Embed (more generous rate limits), then Voyage AI, then Ollama
     if (process.env.MISTRAL_API_KEY) {
       try { return await embedWithMistral(texts); }
-      catch (err) { console.error("  ⚠ Mistral embed failed, trying Voyage:", err.message); }
+      catch (err) { console.error("  Mistral embed failed, trying Voyage:", err.message); }
     }
     if (process.env.VOYAGE_API_KEY) {
       try { return await embedWithVoyage(texts, inputType); }
-      catch (err) { console.error("  ⚠ Voyage embed failed, trying Ollama:", err.message); }
+      catch (err) { console.error("  Voyage embed failed, trying Ollama:", err.message); }
     }
   }
   return embedWithOllama(texts);
@@ -274,7 +307,7 @@ async function embedWithMistral(texts) {
 
       if (res.status === 429) {
         const wait = Math.pow(2, attempt + 1) * 3000;
-        console.log(`  ⏳ Mistral embed rate limit, retry dans ${wait / 1000}s...`);
+        console.log(`  Mistral embed rate limit, retry dans ${wait / 1000}s...`);
         await new Promise(r => setTimeout(r, wait));
         continue;
       }
@@ -319,7 +352,7 @@ async function embedWithVoyage(texts, inputType = "document") {
 
         if (res.status === 429) {
           const wait = Math.pow(2, attempt + 1) * 5000; // 10s, 20s, 40s, 80s, 160s
-          console.log(`  ⏳ Voyage AI rate limit, retry dans ${wait / 1000}s (tentative ${attempt + 1}/5)...`);
+          console.log(`  Voyage AI rate limit, retry dans ${wait / 1000}s (tentative ${attempt + 1}/5)...`);
           await new Promise(r => setTimeout(r, wait));
           continue;
         }
@@ -373,14 +406,18 @@ async function embedWithOllama(texts) {
 
 // ── Vector utilities ────────────────────────────────────────────────────────
 
-function embeddingToBuffer(embedding) {
+// Store: Float32Array → Uint8Array (for libSQL BLOB)
+function embeddingToBytes(embedding) {
   const arr = new Float32Array(embedding);
-  return Buffer.from(arr.buffer);
+  return new Uint8Array(arr.buffer);
 }
 
-function bufferToEmbedding(buf) {
-  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-  return new Float32Array(ab);
+// Read: ArrayBuffer | Uint8Array | Buffer → Float32Array
+function bytesToEmbedding(buf) {
+  if (buf instanceof ArrayBuffer) return new Float32Array(buf);
+  if (buf instanceof Uint8Array) return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+  // Handle Node.js Buffer
+  return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 }
 
 function cosineSimilarity(a, b) {
@@ -398,13 +435,15 @@ function cosineSimilarity(a, b) {
 
 async function searchVectors(workspaceId, query, topK = 8) {
   // Check if workspace has embedded chunks
-  const embeddedCount = db.prepare(
-    "SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ? AND embedding IS NOT NULL"
-  ).get(workspaceId).c;
+  const embeddedResult = await db.execute({
+    sql: "SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ? AND embedding IS NOT NULL",
+    args: [workspaceId],
+  });
+  const embeddedCount = embeddedResult.rows[0]?.c ?? 0;
 
   if (embeddedCount === 0) {
     // Fallback to BM25
-    console.log("  ⚡ Fallback BM25 (pas de vecteurs)");
+    console.log("  Fallback BM25 (pas de vecteurs)");
     return searchBM25(workspaceId, query, topK);
   }
 
@@ -414,21 +453,22 @@ async function searchVectors(workspaceId, query, topK = 8) {
     const results = await embedTexts([query], "query");
     queryEmbedding = results[0].embedding;
   } catch (err) {
-    console.error("  ⚠ Erreur embedding query, fallback BM25:", err.message);
+    console.error("  Erreur embedding query, fallback BM25:", err.message);
     return searchBM25(workspaceId, query, topK);
   }
 
   // Load all embedded chunks for workspace
-  const chunks = db.prepare(
-    "SELECT id, document_id, content, embedding, tokens_approx FROM chunks WHERE workspace_id = ? AND embedding IS NOT NULL"
-  ).all(workspaceId);
+  const chunks = (await db.execute({
+    sql: "SELECT id, document_id, content, embedding, tokens_approx FROM chunks WHERE workspace_id = ? AND embedding IS NOT NULL",
+    args: [workspaceId],
+  })).rows;
 
   // Compute similarities
   const scored = [];
   for (const chunk of chunks) {
-    const chunkEmb = bufferToEmbedding(chunk.embedding);
+    const chunkEmb = bytesToEmbedding(chunk.embedding);
     const score = cosineSimilarity(queryEmbedding, chunkEmb);
-    scored.push({ ...chunk, score, embedding: undefined }); // drop blob from result
+    scored.push({ id: chunk.id, document_id: chunk.document_id, content: chunk.content, tokens_approx: chunk.tokens_approx, score });
   }
 
   scored.sort((a, b) => b.score - a.score);
@@ -440,17 +480,17 @@ async function searchVectors(workspaceId, query, topK = 8) {
 const embeddingJobs = new Map(); // workspaceId -> { total, done, status }
 
 async function embedWorkspaceChunks(workspaceId) {
-  const unembedded = db.prepare(
-    "SELECT id, content FROM chunks WHERE workspace_id = ? AND embedding IS NULL"
-  ).all(workspaceId);
+  const unembedded = (await db.execute({
+    sql: "SELECT id, content FROM chunks WHERE workspace_id = ? AND embedding IS NULL",
+    args: [workspaceId],
+  })).rows;
 
   if (unembedded.length === 0) return;
 
   embeddingJobs.set(workspaceId, { total: unembedded.length, done: 0, status: "running" });
-  console.log(`  📐 Embedding ${unembedded.length} chunks pour workspace ${workspaceId}...`);
+  console.log(`  Embedding ${unembedded.length} chunks pour workspace ${workspaceId}...`);
 
   const batchSize = 64;
-  const updateStmt = db.prepare("UPDATE chunks SET embedding = ?, embed_model = ?, embed_dim = ? WHERE id = ?");
 
   try {
     for (let i = 0; i < unembedded.length; i += batchSize) {
@@ -459,13 +499,14 @@ async function embedWorkspaceChunks(workspaceId) {
 
       const embeddings = await embedTexts(texts, "document");
 
-      const txn = db.transaction(() => {
-        for (let j = 0; j < batch.length; j++) {
-          const buf = embeddingToBuffer(embeddings[j].embedding);
-          updateStmt.run(buf, embeddings[j].model, embeddings[j].dim, batch[j].id);
-        }
-      });
-      txn();
+      // Use db.batch() for atomic writes
+      await db.batch(
+        batch.map((chunk, j) => ({
+          sql: "UPDATE chunks SET embedding = ?, embed_model = ?, embed_dim = ? WHERE id = ?",
+          args: [embeddingToBytes(embeddings[j].embedding), embeddings[j].model, embeddings[j].dim, chunk.id],
+        })),
+        "write"
+      );
 
       const job = embeddingJobs.get(workspaceId);
       if (job) job.done = Math.min(i + batchSize, unembedded.length);
@@ -473,33 +514,43 @@ async function embedWorkspaceChunks(workspaceId) {
 
     const job = embeddingJobs.get(workspaceId);
     if (job) job.status = "done";
-    console.log(`  ✅ Embedding terminé : ${unembedded.length} chunks`);
+    console.log(`  Embedding terminé : ${unembedded.length} chunks`);
   } catch (err) {
-    console.error(`  ❌ Erreur embedding:`, err.message);
+    console.error(`  Erreur embedding:`, err.message);
     const job = embeddingJobs.get(workspaceId);
     if (job) job.status = "error";
   }
 }
 
 // ── BM25 Search (fallback) ──────────────────────────────────────────────────
-function searchBM25(workspaceId, query, topK = 8) {
+async function searchBM25(workspaceId, query, topK = 8) {
   const queryTokens = tokenize(query);
   if (queryTokens.length === 0) return [];
-  const idf = getIdf(workspaceId);
+  const idf = await getIdf(workspaceId);
   const k1 = 1.5, b = 0.75;
-  const allChunks = db.prepare("SELECT id, document_id, content, tokens_approx FROM chunks WHERE workspace_id = ?").all(workspaceId);
+
+  const allChunks = (await db.execute({
+    sql: "SELECT id, document_id, content, tokens_approx FROM chunks WHERE workspace_id = ?",
+    args: [workspaceId],
+  })).rows;
+
   if (allChunks.length === 0) return [];
-  const avgDl = allChunks.reduce((s, c) => s + c.tokens_approx, 0) / allChunks.length;
+  const avgDl = allChunks.reduce((s, c) => s + (c.tokens_approx || 0), 0) / allChunks.length;
+
+  const placeholders = queryTokens.map(() => "?").join(",");
+  const tfRows = (await db.execute({
+    sql: `SELECT ct.chunk_id, ct.term, ct.tf FROM chunk_terms ct
+          JOIN chunks c ON ct.chunk_id = c.id
+          WHERE c.workspace_id = ? AND ct.term IN (${placeholders})`,
+    args: [workspaceId, ...queryTokens],
+  })).rows;
+
   const chunkTfs = new Map();
-  const tfRows = db.prepare(`
-    SELECT ct.chunk_id, ct.term, ct.tf FROM chunk_terms ct
-    JOIN chunks c ON ct.chunk_id = c.id
-    WHERE c.workspace_id = ? AND ct.term IN (${queryTokens.map(() => "?").join(",")})
-  `).all(workspaceId, ...queryTokens);
   for (const row of tfRows) {
     if (!chunkTfs.has(row.chunk_id)) chunkTfs.set(row.chunk_id, {});
     chunkTfs.get(row.chunk_id)[row.term] = row.tf;
   }
+
   const scores = [];
   for (const chunk of allChunks) {
     const tf = chunkTfs.get(chunk.id) || {};
@@ -510,7 +561,7 @@ function searchBM25(workspaceId, query, topK = 8) {
       const dl = chunk.tokens_approx || 1;
       score += termIdf * ((termTf * (k1 + 1)) / (termTf + k1 * (1 - b + b * dl / avgDl)));
     }
-    if (score > 0) scores.push({ ...chunk, score });
+    if (score > 0) scores.push({ id: chunk.id, document_id: chunk.document_id, content: chunk.content, tokens_approx: chunk.tokens_approx, score });
   }
   scores.sort((a, b) => b.score - a.score);
   return scores.slice(0, topK);
@@ -521,10 +572,45 @@ function searchBM25(workspaceId, query, topK = 8) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function aiChat(systemPrompt, messages, options = {}) {
+  if (isOnline && process.env.ANTHROPIC_API_KEY) {
+    try { return await aiChatAnthropic(systemPrompt, messages, options); }
+    catch (err) { console.error("  Anthropic failed, trying next:", err.message); }
+  }
   if (isOnline && process.env.MISTRAL_API_KEY) {
-    return aiChatMistral(systemPrompt, messages, options);
+    try { return await aiChatMistral(systemPrompt, messages, options); }
+    catch (err) { console.error("  Mistral failed, trying local:", err.message); }
   }
   return aiChatLocal(systemPrompt, messages, options);
+}
+
+async function aiChatAnthropic(systemPrompt, messages, options = {}) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
+
+  const claudeMessages = messages.map(m => ({ role: m.role, content: m.content }));
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: options.maxTokens || 4096,
+      system: systemPrompt,
+      messages: claudeMessages,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Anthropic API error ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  return data.content?.[0]?.text || "";
 }
 
 async function aiChatMistral(systemPrompt, messages, options = {}) {
@@ -556,7 +642,7 @@ async function aiChatMistral(systemPrompt, messages, options = {}) {
       console.error(`Mistral API error ${res.status}:`, errText);
       // Try mistral-small as fallback
       if (model !== "mistral-small-latest") {
-        console.log("  🔄 Fallback vers mistral-small-latest...");
+        console.log("  Fallback vers mistral-small-latest...");
         const res2 = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -576,7 +662,7 @@ async function aiChatMistral(systemPrompt, messages, options = {}) {
         }
       }
       // Final fallback to local
-      console.log("  🔄 Fallback vers Ministral 3B local...");
+      console.log("  Fallback vers Ministral 3B local...");
       return aiChatLocal(systemPrompt, messages, options);
     }
 
@@ -659,6 +745,17 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
+// ── Init middleware — ensures DB schema is ready on every request ────────────
+app.use(async (req, res, next) => {
+  try {
+    await initDB();
+    next();
+  } catch (err) {
+    console.error("DB init error:", err.message);
+    res.status(500).json({ error: "Database initialization failed" });
+  }
+});
+
 // ── Health ───────────────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", product: "sailor", version: "0.2.0" });
@@ -667,6 +764,7 @@ app.get("/api/health", (req, res) => {
 // ── AI Mode ──────────────────────────────────────────────────────────────────
 app.get("/api/ai/mode", async (req, res) => {
   const providers = {
+    anthropic: !!process.env.ANTHROPIC_API_KEY,
     mistral: !!process.env.MISTRAL_API_KEY,
     voyage: !!process.env.VOYAGE_API_KEY,
     ollama: false,
@@ -680,9 +778,15 @@ app.get("/api/ai/mode", async (req, res) => {
       providers.ollamaModels = (data.models || []).map(m => m.name);
     }
   } catch {}
+
+  let llm;
+  if (isOnline && process.env.ANTHROPIC_API_KEY) llm = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
+  else if (isOnline && process.env.MISTRAL_API_KEY) llm = process.env.MISTRAL_MODEL || "mistral-large-latest";
+  else llm = process.env.OLLAMA_MODEL || "ministral:3b";
+
   res.json({
     mode: isOnline ? "online" : "offline",
-    llm: isOnline ? (process.env.MISTRAL_MODEL || "mistral-large-latest") : (process.env.OLLAMA_MODEL || "ministral:3b"),
+    llm,
     embeddings: isOnline ? (process.env.VOYAGE_MODEL || "voyage-3-lite") : "nomic-embed-text",
     isOnline,
     providers,
@@ -696,18 +800,19 @@ app.post("/api/ai/mode", async (req, res) => {
 });
 
 // ── Workspaces ──────────────────────────────────────────────────────────────
-app.get("/api/workspaces", (req, res) => {
-  const workspaces = db.prepare(`
-    SELECT w.*,
+app.get("/api/workspaces", async (req, res) => {
+  const workspaces = (await db.execute({
+    sql: `SELECT w.*,
       (SELECT COUNT(*) FROM documents WHERE workspace_id = w.id) as doc_count,
       (SELECT COUNT(*) FROM chunks WHERE workspace_id = w.id) as chunk_count,
       (SELECT COUNT(*) FROM chunks WHERE workspace_id = w.id AND embedding IS NOT NULL) as embedded_count
-    FROM workspaces w ORDER BY w.updated_at DESC
-  `).all();
+    FROM workspaces w ORDER BY w.updated_at DESC`,
+    args: [],
+  })).rows;
   res.json(workspaces);
 });
 
-app.post("/api/workspaces", (req, res) => {
+app.post("/api/workspaces", async (req, res) => {
   const { name, description, industry } = req.body;
   if (!name || name.trim().length < 2) return res.status(400).json({ error: "Nom requis (min 2 caractères)" });
 
@@ -717,42 +822,49 @@ app.post("/api/workspaces", (req, res) => {
     .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
     || `ws-${Date.now()}`;
 
-  const existing = db.prepare("SELECT id FROM workspaces WHERE slug = ?").get(slug);
-  const finalSlug = existing ? `${slug}-${Date.now().toString(36)}` : slug;
+  const existingRow = (await db.execute({ sql: "SELECT id FROM workspaces WHERE slug = ?", args: [slug] })).rows[0] ?? null;
+  const finalSlug = existingRow ? `${slug}-${Date.now().toString(36)}` : slug;
 
-  db.prepare("INSERT INTO workspaces (id, slug, name, description, industry) VALUES (?, ?, ?, ?, ?)").run(
-    id, finalSlug, name.trim(), description || "", industry || ""
-  );
-  fs.mkdirSync(path.join(UPLOADS_DIR, id), { recursive: true });
+  await db.execute({
+    sql: "INSERT INTO workspaces (id, slug, name, description, industry) VALUES (?, ?, ?, ?, ?)",
+    args: [id, finalSlug, name.trim(), description || "", industry || ""],
+  });
+
+  if (!process.env.VERCEL) {
+    fs.mkdirSync(path.join(UPLOADS_DIR, id), { recursive: true });
+  }
   res.json({ id, slug: finalSlug, name: name.trim() });
 });
 
-app.get("/api/workspaces/:slug", (req, res) => {
-  const ws = db.prepare(`
-    SELECT w.*,
+app.get("/api/workspaces/:slug", async (req, res) => {
+  const ws = (await db.execute({
+    sql: `SELECT w.*,
       (SELECT COUNT(*) FROM documents WHERE workspace_id = w.id) as doc_count,
       (SELECT COUNT(*) FROM chunks WHERE workspace_id = w.id) as chunk_count,
       (SELECT COUNT(*) FROM chunks WHERE workspace_id = w.id AND embedding IS NOT NULL) as embedded_count
-    FROM workspaces w WHERE w.slug = ?
-  `).get(req.params.slug);
+    FROM workspaces w WHERE w.slug = ?`,
+    args: [req.params.slug],
+  })).rows[0] ?? null;
   if (!ws) return res.status(404).json({ error: "Workspace not found" });
   res.json(ws);
 });
 
-app.delete("/api/workspaces/:slug", (req, res) => {
-  const ws = db.prepare("SELECT id FROM workspaces WHERE slug = ?").get(req.params.slug);
+app.delete("/api/workspaces/:slug", async (req, res) => {
+  const ws = (await db.execute({ sql: "SELECT id FROM workspaces WHERE slug = ?", args: [req.params.slug] })).rows[0] ?? null;
   if (!ws) return res.status(404).json({ error: "Not found" });
-  db.prepare("DELETE FROM workspaces WHERE id = ?").run(ws.id);
+  await db.execute({ sql: "DELETE FROM workspaces WHERE id = ?", args: [ws.id] });
   invalidateIdf(ws.id);
   embeddingJobs.delete(ws.id);
-  const wsDir = path.join(UPLOADS_DIR, ws.id);
-  try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
+  if (!process.env.VERCEL) {
+    const wsDir = path.join(UPLOADS_DIR, ws.id);
+    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
+  }
   res.json({ ok: true });
 });
 
 // ── Workspace middleware ────────────────────────────────────────────────────
-function wsMiddleware(req, res, next) {
-  const ws = db.prepare("SELECT * FROM workspaces WHERE slug = ?").get(req.params.slug);
+async function wsMiddleware(req, res, next) {
+  const ws = (await db.execute({ sql: "SELECT * FROM workspaces WHERE slug = ?", args: [req.params.slug] })).rows[0] ?? null;
   if (!ws) return res.status(404).json({ error: "Workspace not found" });
   req.workspace = ws;
   next();
@@ -784,31 +896,40 @@ app.post("/api/w/:slug/upload", wsMiddleware, upload.array("files", 100), async 
           const docId = uuid();
           const { text, html } = await parseDocument(ef.path, efExt, ef.name);
 
-          db.prepare(`INSERT INTO documents (id, workspace_id, filename, original_name, type, title, categorie, auteur, date_creation, mots_cles, content_text, content_html, file_size)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-            docId, ws.id, ef.name, ef.name, efExt,
-            indexEntry.titre || ef.name,
-            indexEntry.categorie || "",
-            indexEntry.auteur || "",
-            indexEntry.date_creation || "",
-            indexEntry.mots_cles || "",
-            text, html, fs.statSync(ef.path).size
-          );
+          await db.execute({
+            sql: `INSERT INTO documents (id, workspace_id, filename, original_name, type, title, categorie, auteur, date_creation, mots_cles, content_text, content_html, file_size)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              docId, ws.id, ef.name, ef.name, efExt,
+              indexEntry.titre || ef.name,
+              indexEntry.categorie || "",
+              indexEntry.auteur || "",
+              indexEntry.date_creation || "",
+              indexEntry.mots_cles || "",
+              text, html, fs.statSync(ef.path).size,
+            ],
+          });
 
           const chunks = chunkText(text);
-          const insertChunk = db.prepare("INSERT INTO chunks (id, document_id, workspace_id, chunk_index, content, tokens_approx) VALUES (?, ?, ?, ?, ?, ?)");
-          const insertTerm = db.prepare("INSERT INTO chunk_terms (chunk_id, term, tf) VALUES (?, ?, ?)");
+          const chunkBatch = [];
+          const termBatch = [];
 
-          const txn = db.transaction(() => {
-            for (let i = 0; i < chunks.length; i++) {
-              const chunkId = uuid();
-              const tokens = tokenize(chunks[i]);
-              insertChunk.run(chunkId, docId, ws.id, i, chunks[i], tokens.length);
-              const tf = computeTf(tokens);
-              for (const [term, val] of Object.entries(tf)) insertTerm.run(chunkId, term, val);
+          for (let i = 0; i < chunks.length; i++) {
+            const chunkId = uuid();
+            const tokens = tokenize(chunks[i]);
+            chunkBatch.push({
+              sql: "INSERT INTO chunks (id, document_id, workspace_id, chunk_index, content, tokens_approx) VALUES (?, ?, ?, ?, ?, ?)",
+              args: [chunkId, docId, ws.id, i, chunks[i], tokens.length],
+            });
+            const tf = computeTf(tokens);
+            for (const [term, val] of Object.entries(tf)) {
+              termBatch.push({ sql: "INSERT INTO chunk_terms (chunk_id, term, tf) VALUES (?, ?, ?)", args: [chunkId, term, val] });
             }
-          });
-          txn();
+          }
+
+          if (chunkBatch.length > 0) await db.batch(chunkBatch, "write");
+          if (termBatch.length > 0) await db.batch(termBatch, "write");
+
           results.push({ id: docId, name: ef.name, title: indexEntry.titre || ef.name, chunks: chunks.length });
         }
       } catch (err) {
@@ -827,31 +948,37 @@ app.post("/api/w/:slug/upload", wsMiddleware, upload.array("files", 100), async 
 
     const { text, html } = await parseDocument(destPath, ext, file.originalname);
 
-    db.prepare(`INSERT INTO documents (id, workspace_id, filename, original_name, type, title, content_text, content_html, file_size)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      docId, ws.id, `${docId}.${ext}`, file.originalname, ext,
-      file.originalname, text, html, file.size
-    );
+    await db.execute({
+      sql: `INSERT INTO documents (id, workspace_id, filename, original_name, type, title, content_text, content_html, file_size)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [docId, ws.id, `${docId}.${ext}`, file.originalname, ext, file.originalname, text, html, file.size],
+    });
 
     const chunks = chunkText(text);
-    const insertChunk = db.prepare("INSERT INTO chunks (id, document_id, workspace_id, chunk_index, content, tokens_approx) VALUES (?, ?, ?, ?, ?, ?)");
-    const insertTerm = db.prepare("INSERT INTO chunk_terms (chunk_id, term, tf) VALUES (?, ?, ?)");
+    const chunkBatch = [];
+    const termBatch = [];
 
-    const txn = db.transaction(() => {
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkId = uuid();
-        const tokens = tokenize(chunks[i]);
-        insertChunk.run(chunkId, docId, ws.id, i, chunks[i], tokens.length);
-        const tf = computeTf(tokens);
-        for (const [term, val] of Object.entries(tf)) insertTerm.run(chunkId, term, val);
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkId = uuid();
+      const tokens = tokenize(chunks[i]);
+      chunkBatch.push({
+        sql: "INSERT INTO chunks (id, document_id, workspace_id, chunk_index, content, tokens_approx) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [chunkId, docId, ws.id, i, chunks[i], tokens.length],
+      });
+      const tf = computeTf(tokens);
+      for (const [term, val] of Object.entries(tf)) {
+        termBatch.push({ sql: "INSERT INTO chunk_terms (chunk_id, term, tf) VALUES (?, ?, ?)", args: [chunkId, term, val] });
       }
-    });
-    txn();
+    }
+
+    if (chunkBatch.length > 0) await db.batch(chunkBatch, "write");
+    if (termBatch.length > 0) await db.batch(termBatch, "write");
+
     results.push({ id: docId, name: file.originalname, chunks: chunks.length });
   }
 
   invalidateIdf(ws.id);
-  db.prepare("UPDATE workspaces SET updated_at = datetime('now') WHERE id = ?").run(ws.id);
+  await db.execute({ sql: "UPDATE workspaces SET updated_at = datetime('now') WHERE id = ?", args: [ws.id] });
 
   // Launch async embedding (non-blocking)
   embedWorkspaceChunks(ws.id).catch(err => console.error("Embedding job error:", err.message));
@@ -860,10 +987,10 @@ app.post("/api/w/:slug/upload", wsMiddleware, upload.array("files", 100), async 
 });
 
 // ── Embedding status ────────────────────────────────────────────────────────
-app.get("/api/w/:slug/embedding-status", wsMiddleware, (req, res) => {
+app.get("/api/w/:slug/embedding-status", wsMiddleware, async (req, res) => {
   const ws = req.workspace;
-  const total = db.prepare("SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ?").get(ws.id).c;
-  const embedded = db.prepare("SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ? AND embedding IS NOT NULL").get(ws.id).c;
+  const total = ((await db.execute({ sql: "SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ?", args: [ws.id] })).rows[0]?.c) ?? 0;
+  const embedded = ((await db.execute({ sql: "SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ? AND embedding IS NOT NULL", args: [ws.id] })).rows[0]?.c) ?? 0;
   const job = embeddingJobs.get(ws.id);
 
   res.json({
@@ -878,31 +1005,32 @@ app.get("/api/w/:slug/embedding-status", wsMiddleware, (req, res) => {
 app.post("/api/w/:slug/reembed", wsMiddleware, async (req, res) => {
   const ws = req.workspace;
   // Clear existing embeddings
-  db.prepare("UPDATE chunks SET embedding = NULL, embed_model = NULL, embed_dim = NULL WHERE workspace_id = ?").run(ws.id);
+  await db.execute({ sql: "UPDATE chunks SET embedding = NULL, embed_model = NULL, embed_dim = NULL WHERE workspace_id = ?", args: [ws.id] });
   // Re-embed
   embedWorkspaceChunks(ws.id).catch(err => console.error("Re-embed error:", err.message));
   res.json({ ok: true, message: "Re-embedding lancé en arrière-plan" });
 });
 
 // ── Documents list ──────────────────────────────────────────────────────────
-app.get("/api/w/:slug/documents", wsMiddleware, (req, res) => {
-  const docs = db.prepare(`
-    SELECT id, filename, original_name, type, title, categorie, auteur, date_creation, mots_cles, file_size, created_at
-    FROM documents WHERE workspace_id = ? ORDER BY created_at DESC
-  `).all(req.workspace.id);
+app.get("/api/w/:slug/documents", wsMiddleware, async (req, res) => {
+  const docs = (await db.execute({
+    sql: `SELECT id, filename, original_name, type, title, categorie, auteur, date_creation, mots_cles, file_size, created_at
+          FROM documents WHERE workspace_id = ? ORDER BY created_at DESC`,
+    args: [req.workspace.id],
+  })).rows;
   res.json({ documents: docs });
 });
 
 // ── Document content (for preview panel) ────────────────────────────────────
-app.get("/api/w/:slug/documents/:docId", wsMiddleware, (req, res) => {
-  const doc = db.prepare("SELECT * FROM documents WHERE id = ? AND workspace_id = ?").get(req.params.docId, req.workspace.id);
+app.get("/api/w/:slug/documents/:docId", wsMiddleware, async (req, res) => {
+  const doc = (await db.execute({ sql: "SELECT * FROM documents WHERE id = ? AND workspace_id = ?", args: [req.params.docId, req.workspace.id] })).rows[0] ?? null;
   if (!doc) return res.status(404).json({ error: "Document not found" });
   res.json(doc);
 });
 
 // ── Document raw file (serve for iframe preview) ────────────────────────────
-app.get("/api/w/:slug/documents/:docId/raw", wsMiddleware, (req, res) => {
-  const doc = db.prepare("SELECT * FROM documents WHERE id = ? AND workspace_id = ?").get(req.params.docId, req.workspace.id);
+app.get("/api/w/:slug/documents/:docId/raw", wsMiddleware, async (req, res) => {
+  const doc = (await db.execute({ sql: "SELECT * FROM documents WHERE id = ? AND workspace_id = ?", args: [req.params.docId, req.workspace.id] })).rows[0] ?? null;
   if (!doc) return res.status(404).json({ error: "Not found" });
 
   if (doc.content_html) {
@@ -914,7 +1042,7 @@ app.get("/api/w/:slug/documents/:docId/raw", wsMiddleware, (req, res) => {
     return res.send(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
   body { font-family: 'DM Sans', sans-serif; line-height: 1.7; padding: 24px; max-width: 700px; color: #1C1D1A; }
-  h1 { font-family: 'Source Serif 4', serif; color: #1C1D1A; border-bottom: 2px solid #6B8A1A; padding-bottom: 8px; }
+  h1 { font-family: 'DM Sans', sans-serif; color: #1C1D1A; border-bottom: 2px solid #6B8A1A; padding-bottom: 8px; }
   pre { white-space: pre-wrap; word-break: break-word; }
 </style></head>
 <body><h1>${doc.title || doc.original_name}</h1><pre>${doc.content_text}</pre></body></html>`);
@@ -936,22 +1064,26 @@ app.get("/api/w/:slug/documents/:docId/raw", wsMiddleware, (req, res) => {
 });
 
 // ── Context ─────────────────────────────────────────────────────────────────
-app.get("/api/w/:slug/context", wsMiddleware, (req, res) => {
-  const ctx = db.prepare("SELECT * FROM workspace_context WHERE workspace_id = ?").get(req.workspace.id);
+app.get("/api/w/:slug/context", wsMiddleware, async (req, res) => {
+  const ctx = (await db.execute({ sql: "SELECT * FROM workspace_context WHERE workspace_id = ?", args: [req.workspace.id] })).rows[0] ?? null;
   res.json({ context: ctx || {} });
 });
 
-app.post("/api/w/:slug/context", wsMiddleware, (req, res) => {
+app.post("/api/w/:slug/context", wsMiddleware, async (req, res) => {
   const { project_name, description, objectives } = req.body;
-  const existing = db.prepare("SELECT id FROM workspace_context WHERE workspace_id = ?").get(req.workspace.id);
+  const existing = (await db.execute({ sql: "SELECT id FROM workspace_context WHERE workspace_id = ?", args: [req.workspace.id] })).rows[0] ?? null;
   if (existing) {
-    db.prepare("UPDATE workspace_context SET project_name = ?, description = ?, objectives = ? WHERE workspace_id = ?")
-      .run(project_name || "", description || "", objectives || "", req.workspace.id);
+    await db.execute({
+      sql: "UPDATE workspace_context SET project_name = ?, description = ?, objectives = ? WHERE workspace_id = ?",
+      args: [project_name || "", description || "", objectives || "", req.workspace.id],
+    });
   } else {
-    db.prepare("INSERT INTO workspace_context (id, workspace_id, project_name, description, objectives) VALUES (?, ?, ?, ?, ?)")
-      .run(uuid(), req.workspace.id, project_name || "", description || "", objectives || "");
+    await db.execute({
+      sql: "INSERT INTO workspace_context (id, workspace_id, project_name, description, objectives) VALUES (?, ?, ?, ?, ?)",
+      args: [uuid(), req.workspace.id, project_name || "", description || "", objectives || ""],
+    });
   }
-  db.prepare("UPDATE workspaces SET updated_at = datetime('now') WHERE id = ?").run(req.workspace.id);
+  await db.execute({ sql: "UPDATE workspaces SET updated_at = datetime('now') WHERE id = ?", args: [req.workspace.id] });
   res.json({ ok: true });
 });
 
@@ -969,7 +1101,10 @@ app.post("/api/w/:slug/chat", wsMiddleware, async (req, res) => {
   const sourceMap = new Map();
   for (const chunk of relevantChunks) {
     if (!sourceMap.has(chunk.document_id)) {
-      const doc = db.prepare("SELECT id, title, original_name, type, categorie, auteur FROM documents WHERE id = ?").get(chunk.document_id);
+      const doc = (await db.execute({
+        sql: "SELECT id, title, original_name, type, categorie, auteur FROM documents WHERE id = ?",
+        args: [chunk.document_id],
+      })).rows[0] ?? null;
       if (doc) sourceMap.set(chunk.document_id, doc);
     }
   }
@@ -984,7 +1119,7 @@ ${chunk.content}`;
   const contextBlock = contextParts.join("\n\n---\n\n");
 
   // 4. Get workspace context
-  const wsCtx = db.prepare("SELECT * FROM workspace_context WHERE workspace_id = ?").get(ws.id);
+  const wsCtx = (await db.execute({ sql: "SELECT * FROM workspace_context WHERE workspace_id = ?", args: [ws.id] })).rows[0] ?? null;
 
   // 5. Build system prompt
   const systemPrompt = `Tu es Sailor, un assistant IA spécialisé dans la navigation et l'exploration de bases documentaires.
@@ -1067,10 +1202,10 @@ ${contextBlock || "Aucune source pertinente trouvée pour cette question."}`;
 // ── Suggest questions ───────────────────────────────────────────────────────
 app.get("/api/w/:slug/suggestions", wsMiddleware, async (req, res) => {
   const ws = req.workspace;
-  const docCount = db.prepare("SELECT COUNT(*) as c FROM documents WHERE workspace_id = ?").get(ws.id).c;
+  const docCount = ((await db.execute({ sql: "SELECT COUNT(*) as c FROM documents WHERE workspace_id = ?", args: [ws.id] })).rows[0]?.c) ?? 0;
   if (docCount === 0) return res.json({ suggestions: [] });
 
-  const docs = db.prepare("SELECT title, categorie, mots_cles FROM documents WHERE workspace_id = ? LIMIT 20").all(ws.id);
+  const docs = (await db.execute({ sql: "SELECT title, categorie, mots_cles FROM documents WHERE workspace_id = ? LIMIT 20", args: [ws.id] })).rows;
   const categories = [...new Set(docs.map(d => d.categorie).filter(Boolean))];
   const suggestions = [];
 
@@ -1088,40 +1223,43 @@ app.get("/api/w/:slug/suggestions", wsMiddleware, async (req, res) => {
 });
 
 // ── Chat Sessions ───────────────────────────────────────────────────────────
-app.get("/api/w/:slug/chat-sessions", wsMiddleware, (req, res) => {
-  const sessions = db.prepare("SELECT * FROM chat_sessions WHERE workspace_id = ? ORDER BY updated_at DESC").all(req.workspace.id);
+app.get("/api/w/:slug/chat-sessions", wsMiddleware, async (req, res) => {
+  const sessions = (await db.execute({ sql: "SELECT * FROM chat_sessions WHERE workspace_id = ? ORDER BY updated_at DESC", args: [req.workspace.id] })).rows;
   res.json({ sessions: sessions.map(s => ({ ...s, messages: JSON.parse(s.messages || "[]") })) });
 });
 
-app.post("/api/w/:slug/chat-sessions", wsMiddleware, (req, res) => {
+app.post("/api/w/:slug/chat-sessions", wsMiddleware, async (req, res) => {
   const id = uuid();
-  db.prepare("INSERT INTO chat_sessions (id, workspace_id, title) VALUES (?, ?, ?)").run(id, req.workspace.id, req.body.title || "Nouvelle conversation");
+  await db.execute({
+    sql: "INSERT INTO chat_sessions (id, workspace_id, title) VALUES (?, ?, ?)",
+    args: [id, req.workspace.id, req.body.title || "Nouvelle conversation"],
+  });
   res.json({ id, title: req.body.title || "Nouvelle conversation" });
 });
 
-app.get("/api/w/:slug/chat-sessions/:id", wsMiddleware, (req, res) => {
-  const session = db.prepare("SELECT * FROM chat_sessions WHERE id = ? AND workspace_id = ?").get(req.params.id, req.workspace.id);
+app.get("/api/w/:slug/chat-sessions/:id", wsMiddleware, async (req, res) => {
+  const session = (await db.execute({ sql: "SELECT * FROM chat_sessions WHERE id = ? AND workspace_id = ?", args: [req.params.id, req.workspace.id] })).rows[0] ?? null;
   if (!session) return res.status(404).json({ error: "Not found" });
   res.json({ ...session, messages: JSON.parse(session.messages || "[]") });
 });
 
-app.patch("/api/w/:slug/chat-sessions/:id", wsMiddleware, (req, res) => {
+app.patch("/api/w/:slug/chat-sessions/:id", wsMiddleware, async (req, res) => {
   const { title, messages } = req.body;
-  if (title) db.prepare("UPDATE chat_sessions SET title = ?, updated_at = datetime('now') WHERE id = ? AND workspace_id = ?").run(title, req.params.id, req.workspace.id);
-  if (messages) db.prepare("UPDATE chat_sessions SET messages = ?, updated_at = datetime('now') WHERE id = ? AND workspace_id = ?").run(JSON.stringify(messages), req.params.id, req.workspace.id);
+  if (title) await db.execute({ sql: "UPDATE chat_sessions SET title = ?, updated_at = datetime('now') WHERE id = ? AND workspace_id = ?", args: [title, req.params.id, req.workspace.id] });
+  if (messages) await db.execute({ sql: "UPDATE chat_sessions SET messages = ?, updated_at = datetime('now') WHERE id = ? AND workspace_id = ?", args: [JSON.stringify(messages), req.params.id, req.workspace.id] });
   res.json({ ok: true });
 });
 
-app.delete("/api/w/:slug/chat-sessions/:id", wsMiddleware, (req, res) => {
-  db.prepare("DELETE FROM chat_sessions WHERE id = ? AND workspace_id = ?").run(req.params.id, req.workspace.id);
+app.delete("/api/w/:slug/chat-sessions/:id", wsMiddleware, async (req, res) => {
+  await db.execute({ sql: "DELETE FROM chat_sessions WHERE id = ? AND workspace_id = ?", args: [req.params.id, req.workspace.id] });
   res.json({ ok: true });
 });
 
 // ── Onboarding status ───────────────────────────────────────────────────────
-app.get("/api/w/:slug/onboarding/status", wsMiddleware, (req, res) => {
+app.get("/api/w/:slug/onboarding/status", wsMiddleware, async (req, res) => {
   const ws = req.workspace;
-  const docCount = db.prepare("SELECT COUNT(*) as c FROM documents WHERE workspace_id = ?").get(ws.id).c;
-  const ctx = db.prepare("SELECT * FROM workspace_context WHERE workspace_id = ?").get(ws.id);
+  const docCount = ((await db.execute({ sql: "SELECT COUNT(*) as c FROM documents WHERE workspace_id = ?", args: [ws.id] })).rows[0]?.c) ?? 0;
+  const ctx = (await db.execute({ sql: "SELECT * FROM workspace_context WHERE workspace_id = ?", args: [ws.id] })).rows[0] ?? null;
 
   let step = 1;
   if (docCount > 0) step = 2;
@@ -1132,21 +1270,21 @@ app.get("/api/w/:slug/onboarding/status", wsMiddleware, (req, res) => {
 });
 
 // ── Stats ───────────────────────────────────────────────────────────────────
-app.get("/api/w/:slug/stats", wsMiddleware, (req, res) => {
+app.get("/api/w/:slug/stats", wsMiddleware, async (req, res) => {
   const ws = req.workspace;
-  const docCount = db.prepare("SELECT COUNT(*) as c FROM documents WHERE workspace_id = ?").get(ws.id).c;
-  const chunkCount = db.prepare("SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ?").get(ws.id).c;
-  const embeddedCount = db.prepare("SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ? AND embedding IS NOT NULL").get(ws.id).c;
-  const categories = db.prepare("SELECT DISTINCT categorie FROM documents WHERE workspace_id = ? AND categorie != ''").all(ws.id);
-  const types = db.prepare("SELECT type, COUNT(*) as c FROM documents WHERE workspace_id = ? GROUP BY type").all(ws.id);
-  const embedModel = db.prepare("SELECT embed_model FROM chunks WHERE workspace_id = ? AND embed_model IS NOT NULL LIMIT 1").get(ws.id);
+  const docCount = ((await db.execute({ sql: "SELECT COUNT(*) as c FROM documents WHERE workspace_id = ?", args: [ws.id] })).rows[0]?.c) ?? 0;
+  const chunkCount = ((await db.execute({ sql: "SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ?", args: [ws.id] })).rows[0]?.c) ?? 0;
+  const embeddedCount = ((await db.execute({ sql: "SELECT COUNT(*) as c FROM chunks WHERE workspace_id = ? AND embedding IS NOT NULL", args: [ws.id] })).rows[0]?.c) ?? 0;
+  const categories = (await db.execute({ sql: "SELECT DISTINCT categorie FROM documents WHERE workspace_id = ? AND categorie != ''", args: [ws.id] })).rows;
+  const types = (await db.execute({ sql: "SELECT type, COUNT(*) as c FROM documents WHERE workspace_id = ? GROUP BY type", args: [ws.id] })).rows;
+  const embedModelRow = (await db.execute({ sql: "SELECT embed_model FROM chunks WHERE workspace_id = ? AND embed_model IS NOT NULL LIMIT 1", args: [ws.id] })).rows[0] ?? null;
 
   res.json({
     documents: docCount,
     chunks: chunkCount,
     embedded_chunks: embeddedCount,
     embed_coverage: chunkCount > 0 ? Math.round((embeddedCount / chunkCount) * 100) : 0,
-    embed_model: embedModel?.embed_model || null,
+    embed_model: embedModelRow?.embed_model || null,
     categories: categories.map(c => c.categorie),
     types,
   });
@@ -1163,12 +1301,17 @@ if (fs.existsSync(frontendDir)) {
   });
 }
 
-// ── Start ───────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n  🚢 Sailor v0.2.0 — RAG avec embeddings vectoriels`);
-  console.log(`  📡 Port: ${PORT}`);
-  console.log(`  📂 Database: ${DB_PATH}`);
-  console.log(`  🔑 Mistral API: ${process.env.MISTRAL_API_KEY ? "✓" : "✗"}`);
-  console.log(`  🔑 Voyage AI: ${process.env.VOYAGE_API_KEY ? "✓" : "✗"}`);
-  console.log(`  💾 Ollama fallback: ${process.env.OLLAMA_MODEL || "ministral:3b"}\n`);
-});
+// ── Start server in non-Vercel environments ──────────────────────────────────
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n  Sailor v0.2.0 — AG002 RAG avec embeddings vectoriels`);
+    console.log(`  Port: ${PORT}`);
+    console.log(`  Turso: ${process.env.TURSO_DATABASE_URL || "file:./sailor.db"}`);
+    console.log(`  Anthropic: ${process.env.ANTHROPIC_API_KEY ? "oui" : "non"}`);
+    console.log(`  Mistral API: ${process.env.MISTRAL_API_KEY ? "oui" : "non"}`);
+    console.log(`  Voyage AI: ${process.env.VOYAGE_API_KEY ? "oui" : "non"}`);
+    console.log(`  Ollama fallback: ${process.env.OLLAMA_MODEL || "ministral:3b"}\n`);
+  });
+}
+
+export default app;
