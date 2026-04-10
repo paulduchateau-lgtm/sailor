@@ -5,7 +5,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { createClient } from "@libsql/client";
+import { createClient } from "@libsql/client/web";
 import { v4 as uuid } from "uuid";
 import mammoth from "mammoth";
 import * as cheerio from "cheerio";
@@ -22,8 +22,11 @@ if (!process.env.VERCEL) {
 }
 
 // ── Database ────────────────────────────────────────────────────────────────
+if (!process.env.TURSO_DATABASE_URL) {
+  console.error("TURSO_DATABASE_URL is required. Set it to your libsql:// URL.");
+}
 const db = createClient({
-  url: process.env.TURSO_DATABASE_URL || "file:./sailor.db",
+  url: process.env.TURSO_DATABASE_URL || "libsql://invalid.invalid",
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
@@ -740,10 +743,17 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use("/uploads", express.static(UPLOADS_DIR));
 
-const upload = multer({
-  dest: path.join(UPLOADS_DIR, "tmp"),
-  limits: { fileSize: 100 * 1024 * 1024 },
-});
+// On Vercel the filesystem is read-only, so use in-memory storage for uploads.
+// In dev we keep disk storage so /uploads static serving keeps working.
+const upload = process.env.VERCEL
+  ? multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 100 * 1024 * 1024 },
+    })
+  : multer({
+      dest: path.join(UPLOADS_DIR, "tmp"),
+      limits: { fileSize: 100 * 1024 * 1024 },
+    });
 
 // ── Init middleware — ensures DB schema is ready on every request ────────────
 app.use(async (req, res, next) => {
