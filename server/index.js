@@ -6,6 +6,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import { createClient } from "@libsql/client/web";
+import { blobPutFile, blobDeleteWorkspace, blobKey, blobEnabled } from "./blob.js";
 import { v4 as uuid } from "uuid";
 import mammoth from "mammoth";
 import * as cheerio from "cheerio";
@@ -15,11 +16,21 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3003;
-const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, "uploads");
 
-if (!process.env.VERCEL) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
+// Upload storage:
+//   - locally: server/uploads/ (persistent across runs)
+//   - on Vercel: /tmp/sailor-uploads/ (ephemeral per-invocation, but /tmp IS
+//     writable on Lambda — so parsing/chunking/embedding work end-to-end).
+//     The ORIGINAL file does not persist across requests, but chunks +
+//     embeddings do (they live in Turso).
+const UPLOADS_DIR =
+  process.env.UPLOADS_DIR ||
+  (process.env.VERCEL
+    ? "/tmp/sailor-uploads"
+    : path.join(__dirname, "uploads"));
+
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(path.join(UPLOADS_DIR, "tmp"), { recursive: true });
 
 // ── Database ────────────────────────────────────────────────────────────────
 if (!process.env.TURSO_DATABASE_URL) {
@@ -61,6 +72,7 @@ async function initDB() {
       content_text TEXT DEFAULT '',
       content_html TEXT DEFAULT '',
       file_size INTEGER DEFAULT 0,
+      blob_url TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
     );
@@ -110,6 +122,9 @@ async function initDB() {
   try { await db.execute("ALTER TABLE chunks ADD COLUMN embedding BLOB"); } catch { /* column already exists */ }
   try { await db.execute("ALTER TABLE chunks ADD COLUMN embed_model TEXT"); } catch { /* column already exists */ }
   try { await db.execute("ALTER TABLE chunks ADD COLUMN embed_dim INTEGER"); } catch { /* column already exists */ }
+
+  // V3 Migration: persistent originals in Vercel Blob
+  try { await db.execute("ALTER TABLE documents ADD COLUMN blob_url TEXT DEFAULT ''"); } catch { /* column already exists */ }
 
   initialized = true;
 }
@@ -743,17 +758,13 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use("/uploads", express.static(UPLOADS_DIR));
 
-// On Vercel the filesystem is read-only, so use in-memory storage for uploads.
-// In dev we keep disk storage so /uploads static serving keeps working.
-const upload = process.env.VERCEL
-  ? multer({
-      storage: multer.memoryStorage(),
-      limits: { fileSize: 100 * 1024 * 1024 },
-    })
-  : multer({
-      dest: path.join(UPLOADS_DIR, "tmp"),
-      limits: { fileSize: 100 * 1024 * 1024 },
-    });
+// Disk storage works on Vercel now that UPLOADS_DIR points to /tmp/sailor-uploads
+// (which is writable on Lambda). This lets the rest of the parsing pipeline keep
+// reading from file.path uniformly in dev and prod.
+const upload = multer({
+  dest: path.join(UPLOADS_DIR, "tmp"),
+  limits: { fileSize: 100 * 1024 * 1024 },
+});
 
 // ── Init middleware — ensures DB schema is ready on every request ────────────
 app.use(async (req, res, next) => {
@@ -840,9 +851,7 @@ app.post("/api/workspaces", async (req, res) => {
     args: [id, finalSlug, name.trim(), description || "", industry || ""],
   });
 
-  if (!process.env.VERCEL) {
-    fs.mkdirSync(path.join(UPLOADS_DIR, id), { recursive: true });
-  }
+  fs.mkdirSync(path.join(UPLOADS_DIR, id), { recursive: true });
   res.json({ id, slug: finalSlug, name: name.trim() });
 });
 
@@ -865,10 +874,10 @@ app.delete("/api/workspaces/:slug", async (req, res) => {
   await db.execute({ sql: "DELETE FROM workspaces WHERE id = ?", args: [ws.id] });
   invalidateIdf(ws.id);
   embeddingJobs.delete(ws.id);
-  if (!process.env.VERCEL) {
-    const wsDir = path.join(UPLOADS_DIR, ws.id);
-    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
-  }
+  const wsDir = path.join(UPLOADS_DIR, ws.id);
+  try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
+  // Also cleanup persistent originals in Vercel Blob if configured.
+  try { await blobDeleteWorkspace(ws.id); } catch (err) { console.error("Blob cleanup error:", err.message); }
   res.json({ ok: true });
 });
 
@@ -906,9 +915,17 @@ app.post("/api/w/:slug/upload", wsMiddleware, upload.array("files", 100), async 
           const docId = uuid();
           const { text, html } = await parseDocument(ef.path, efExt, ef.name);
 
+          // Persistent original: push to Vercel Blob if enabled (no-op otherwise)
+          let blobUrl = "";
+          try {
+            blobUrl = await blobPutFile(blobKey(ws.id, docId, efExt), ef.path) || "";
+          } catch (err) {
+            console.error("Blob upload error:", err.message);
+          }
+
           await db.execute({
-            sql: `INSERT INTO documents (id, workspace_id, filename, original_name, type, title, categorie, auteur, date_creation, mots_cles, content_text, content_html, file_size)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            sql: `INSERT INTO documents (id, workspace_id, filename, original_name, type, title, categorie, auteur, date_creation, mots_cles, content_text, content_html, file_size, blob_url)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             args: [
               docId, ws.id, ef.name, ef.name, efExt,
               indexEntry.titre || ef.name,
@@ -917,6 +934,7 @@ app.post("/api/w/:slug/upload", wsMiddleware, upload.array("files", 100), async 
               indexEntry.date_creation || "",
               indexEntry.mots_cles || "",
               text, html, fs.statSync(ef.path).size,
+              blobUrl,
             ],
           });
 
@@ -958,10 +976,22 @@ app.post("/api/w/:slug/upload", wsMiddleware, upload.array("files", 100), async 
 
     const { text, html } = await parseDocument(destPath, ext, file.originalname);
 
+    // Persistent original: push to Vercel Blob if enabled (no-op otherwise)
+    let blobUrl = "";
+    try {
+      blobUrl = await blobPutFile(
+        blobKey(ws.id, docId, ext),
+        destPath,
+        file.mimetype,
+      ) || "";
+    } catch (err) {
+      console.error("Blob upload error:", err.message);
+    }
+
     await db.execute({
-      sql: `INSERT INTO documents (id, workspace_id, filename, original_name, type, title, content_text, content_html, file_size)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [docId, ws.id, `${docId}.${ext}`, file.originalname, ext, file.originalname, text, html, file.size],
+      sql: `INSERT INTO documents (id, workspace_id, filename, original_name, type, title, content_text, content_html, file_size, blob_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [docId, ws.id, `${docId}.${ext}`, file.originalname, ext, file.originalname, text, html, file.size, blobUrl],
     });
 
     const chunks = chunkText(text);
@@ -1042,6 +1072,11 @@ app.get("/api/w/:slug/documents/:docId", wsMiddleware, async (req, res) => {
 app.get("/api/w/:slug/documents/:docId/raw", wsMiddleware, async (req, res) => {
   const doc = (await db.execute({ sql: "SELECT * FROM documents WHERE id = ? AND workspace_id = ?", args: [req.params.docId, req.workspace.id] })).rows[0] ?? null;
   if (!doc) return res.status(404).json({ error: "Not found" });
+
+  // Prefer persistent original from Vercel Blob when available
+  if (doc.blob_url) {
+    return res.redirect(302, doc.blob_url);
+  }
 
   if (doc.content_html) {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
