@@ -130,37 +130,16 @@ async function initDB() {
 }
 
 // ── Connectivity state ──────────────────────────────────────────────────────
-let isOnline = true;
+// We no longer ping the provider at boot. isOnline simply reflects whether
+// *any* cloud LLM credential is configured. On Vercel serverless this avoids
+// eating ~1s of cold-start time and removes a race where the first request
+// could land before the ping completed.
+let isOnline =
+  !!process.env.ANTHROPIC_API_KEY || !!process.env.MISTRAL_API_KEY;
 
 async function checkConnectivity() {
-  // Try Anthropic first, then Mistral, then generic internet check
-  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.MISTRAL_API_KEY;
-  if (!apiKey) { isOnline = false; return false; }
-
-  try {
-    if (process.env.ANTHROPIC_API_KEY) {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1, messages: [{ role: "user", content: "." }] }),
-        signal: AbortSignal.timeout(5000),
-      });
-      isOnline = r.ok || r.status === 401 || r.status === 403 || r.status === 400;
-    } else {
-      const r = await fetch("https://api.mistral.ai/v1/models", {
-        method: "GET",
-        headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
-        signal: AbortSignal.timeout(5000),
-      });
-      isOnline = r.ok || r.status === 401 || r.status === 403;
-    }
-  } catch {
-    isOnline = false;
-  }
+  isOnline =
+    !!process.env.ANTHROPIC_API_KEY || !!process.env.MISTRAL_API_KEY;
   return isOnline;
 }
 
@@ -290,16 +269,14 @@ function chunkText(text, chunkSize = 500, overlap = 100) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function embedTexts(texts, inputType = "document") {
-  if (isOnline) {
-    // Priority: Mistral Embed (more generous rate limits), then Voyage AI, then Ollama
-    if (process.env.MISTRAL_API_KEY) {
-      try { return await embedWithMistral(texts); }
-      catch (err) { console.error("  Mistral embed failed, trying Voyage:", err.message); }
-    }
-    if (process.env.VOYAGE_API_KEY) {
-      try { return await embedWithVoyage(texts, inputType); }
-      catch (err) { console.error("  Voyage embed failed, trying Ollama:", err.message); }
-    }
+  // Provider selection purely by env vars, no online gating.
+  if (process.env.MISTRAL_API_KEY) {
+    try { return await embedWithMistral(texts); }
+    catch (err) { console.error("  Mistral embed failed, trying Voyage:", err.message); }
+  }
+  if (process.env.VOYAGE_API_KEY) {
+    try { return await embedWithVoyage(texts, inputType); }
+    catch (err) { console.error("  Voyage embed failed, trying Ollama:", err.message); }
   }
   return embedWithOllama(texts);
 }
@@ -590,14 +567,39 @@ async function searchBM25(workspaceId, query, topK = 8) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function aiChat(systemPrompt, messages, options = {}) {
-  if (isOnline && process.env.ANTHROPIC_API_KEY) {
+  // Provider selection is driven purely by env vars. No "online" gating —
+  // on serverless we never want to pre-ping an API at cold start just to
+  // decide whether to use it.
+  const errors = [];
+
+  if (process.env.ANTHROPIC_API_KEY) {
     try { return await aiChatAnthropic(systemPrompt, messages, options); }
-    catch (err) { console.error("  Anthropic failed, trying next:", err.message); }
+    catch (err) {
+      console.error("  Anthropic failed:", err.message);
+      errors.push(`Anthropic: ${err.message}`);
+    }
   }
-  if (isOnline && process.env.MISTRAL_API_KEY) {
+  if (process.env.MISTRAL_API_KEY) {
     try { return await aiChatMistral(systemPrompt, messages, options); }
-    catch (err) { console.error("  Mistral failed, trying local:", err.message); }
+    catch (err) {
+      console.error("  Mistral failed:", err.message);
+      errors.push(`Mistral: ${err.message}`);
+    }
   }
+
+  // On Vercel there is no Ollama. Surface a precise error instead of the
+  // legacy "start ollama serve" message.
+  if (process.env.VERCEL) {
+    const configured = [
+      process.env.ANTHROPIC_API_KEY && "ANTHROPIC_API_KEY",
+      process.env.MISTRAL_API_KEY && "MISTRAL_API_KEY",
+    ].filter(Boolean);
+    if (configured.length === 0) {
+      return "Erreur : aucune clé API LLM configurée. Définissez ANTHROPIC_API_KEY dans les variables d'environnement Vercel.";
+    }
+    return `Erreur : impossible de contacter le modèle IA. ${errors.join(" · ")}`;
+  }
+
   return aiChatLocal(systemPrompt, messages, options);
 }
 
@@ -1232,7 +1234,7 @@ ${contextBlock || "Aucune source pertinente trouvée pour cette question."}`;
       response,
       sources,
       chunks_used: relevantChunks.length,
-      ai_provider: isOnline ? "mistral" : "ollama",
+      ai_provider: getLLMProvider(),
     });
   } catch (err) {
     console.error("Chat error:", err);
